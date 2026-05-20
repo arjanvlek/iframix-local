@@ -1,0 +1,34 @@
+### OS temporary files ###
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
+
+### Intellij IDEA ###
+.idea/
+*.iml
+
+### Python ###
+__pycache__/
+venv/
+.venv/
+
+### Data / application files ###
+ASSETS_PER_APP_VERSION.md
+ASSETS_PER_APP_VERSION_PAD1.md
+icharguard.db
+icharguard.db-wal
+icharguard.db-shm
+photos/
+photos_with_ai/
+photos_temp/
+logs/
+weather_icons/
+webapp/
+!webapp/index.placeholder.html
+!webapp/download/assets/.gitkeep
+!webapp/download/xieyi/.gitkeep
+!webapp/pad1/.gitkeep
+!webapp/static/.gitkeep
+server.crt
+server.key

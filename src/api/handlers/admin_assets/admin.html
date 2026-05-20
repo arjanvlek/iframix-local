@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>iFramix Admin</title>
+<style>__ADMIN_CSS__</style>
+</head>
+<body>
+    <div class="header">
+        <h1>iFramix Admin</h1>
+        <span class="refresh">Charger table refreshes in the background every 10s</span>
+    </div>
+    <h2>Chargers</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>MAC</th>
+                <th>WiFi</th>
+                <th>Firmware</th>
+                <th>Voltage</th>
+                <th>Current</th>
+                <th>Battery</th>
+                <th title="Desired state — last charge command sent by the controller app">Charge command</th>
+                <th title="Actual state — last charging_switch the charger itself reported over MQTT">Charger status</th>
+                <th title="Auto: every refersh-battery call is forwarded to the charger. Manual: only the Enable/Disable buttons drive the charger.">Mode</th>
+                <th>Last Seen</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody id="chargers-tbody">
+            __ADMIN_ROWS__
+        </tbody>
+    </table>
+    <div id="status" class="status"></div>
+
+    <h2>Display Devices</h2>
+    <div class="cards-grid">
+        __ADMIN_CARDS__
+    </div>
+
+    <div id="template-modal" class="modal-backdrop" role="dialog"
+         aria-modal="true" aria-label="AI photo template">
+        <div class="modal">
+            <div class="modal-head">
+                <h3>AI photo template</h3>
+                <button type="button" class="close" aria-label="Close">
+                    &times;
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-preview"></div>
+                <div class="modal-meta"></div>
+                <div class="template-grid"></div>
+                <div class="template-hint"></div>
+            </div>
+            <div class="modal-foot">
+                <div class="status"></div>
+                <button type="button" class="btn neutral cancel-btn">
+                    Cancel
+                </button>
+                <button type="button" class="btn primary save-template-btn">
+                    Save
+                </button>
+            </div>
+        </div>
+    </div>
+
+<script>__ADMIN_JS__</script>
+</body>
+</html>
