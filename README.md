@@ -95,7 +95,7 @@ You can check if it's running with `docker ps`. You should see an item named `mo
 ### Step 3: Download the webapp assets
 
 The icons, HTML files, and scripts shown inside the iPad app are copyrighted by the original makers, so we cannot include them by default. 
-These scripts download them for you. Run them **one at a time**, in this order:
+These scripts download them for you from the original maker's server. Run them **one at a time**, in this order:
 
 ```bash
 python3 scripts/fetch-webapp-assets.py
