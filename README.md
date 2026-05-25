@@ -20,13 +20,19 @@ See [COMPATIBILITY.md](COMPATIBILITY.md) for which features work with which app 
 
 ## Important Disclaimer
 
-**This is NOT an official iFramix product.**
+> [!CAUTION]
+> **This is NOT an official iFramix product.**
+>
+> **This project and the author are NOT affiliated with iFramix Pro and Chengdu Malong Technology Co., Ltd in ANY way.**
+>
+>  **The creator of this project is [Arjan Vlek](https://github.com/arjanvlek)**
+> 
+> **Use of this project is ENTIRELY AT YOUR OWN RISK. The creator is not responsible for any damage resulting from use of this project, including damage to your iCharGuard charger, wooden iFramix picture frame, the device you place inside the picture frame and the device you use to control your picture frame. Do NOT disassemble the charger module or the LED Strip of your picture frame because of the risk of electric shock!**.
 
-**This project and the author are NOT affiliated with iFramix Pro and Chengdu Malong Technology Co., Ltd in ANY way.**
+## Important Security Notice
 
-**The creator of this project is [Arjan Vlek](https://github.com/arjanvlek)**
-
-**Use of this project is ENTIRELY AT YOUR OWN RISK. The creator is not responsible for any damage resulting from use of this project, including damage to your iCharGuard charger, wooden iFramix picture frame, the device you place inside the picture frame and the device you use to control your picture frame. Do NOT disassemble the charger module or the LED Strip of your picture frame because of the risk of electric shock!**.
+> [!CAUTION]
+> This project is aimed to be run at a local computer or server at home. Since the login page does not validate your username and password, and photos can be downloaded from the admin page, you should NOT install this project on a public server, VPS or other cloud service.
 
 ## What you'll need
 
@@ -278,6 +284,20 @@ may have to proxy this project through your Web Server (search for 'apache rever
 ### Testing
 
 - [Running tests](docs/testing.md): test suite setup, what is covered.
+
+## Usage of Generative AI within this project
+
+I believe in transparency when it comes to using Generative AI / LLM to develop software. 
+
+**Has Generative AI been used within this project?**
+
+Yes. Most of the source code and tests in this project have been generated using Claude Code, including parts of the documentation.
+
+**Has the project and its code been manually validated / tested before releasing it?**
+
+Yes. The code has been validated and I've manually tested everything with a real iFramix set and a Raspberry Pi server. 
+
+I've also manually validated the documentation and adjusted it where needed.
 
 ## License
 
