@@ -6,7 +6,7 @@ There are 2 methods to view photos: "Photos" and "Photos + AI".
 
 In the real product, photos with AI are processed by an AI service, which generates a title and a quote that should match the content of the photo (but works terribly in practice).
 
-In this local implementation, no such AI service is present. Instead, image capture date, camera model and exposure settings are displayed. This is determined from the image's EXIF data.
+In this local implementation, no such AI service is present. Instead, image capture date, camera model and exposure settings (aperture, shutter speed, and ISO) are displayed. This is determined from the image's EXIF data.
 
 The webapp picks one of several layout templates per AI photo (5 horizontal styles, 4 vertical styles on a 16:9 iPad; 10 of each on a 4:3 iPad). A random template is selected at upload time (and on first read for photos dropped directly into `photos_with_ai/`)
 

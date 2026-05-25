@@ -118,8 +118,11 @@ def _read_exif_ifd(tiff, offset, endian):
     """Read one IFD block and return a ``{tag: value}`` dict.
 
     Decodes the TIFF/EXIF entry types we actually consume:
-    ASCII (strings), SHORT/LONG (ints, count=1), and RATIONAL (floats,
-    count=1). Other types are skipped.
+    ASCII (strings), SHORT/LONG (ints, count=1), and RATIONAL
+    (``(num, den)`` tuples, count=1). Other types are skipped. The
+    rational form is preserved so callers like the shutter-speed
+    formatter can render the original fraction (``1/250s``) without
+    floating-point round-tripping.
     """
     out = {}
     if offset + 2 > len(tiff):
@@ -152,7 +155,7 @@ def _read_exif_ifd(tiff, offset, endian):
             num, den = struct.unpack(
                 endian + "II", tiff[val_off:val_off + 8])
             if den:
-                out[tag] = num / den
+                out[tag] = (num, den)
     return out
 
 
@@ -213,6 +216,10 @@ def get_exif_metadata(filepath):
       (0x9003) → DateTimeDigitized (0x9004) → IFD0 DateTime (0x0132).
     - ``model`` — camera model string (0x0110).
     - ``aperture`` — FNumber as a float, e.g. ``2.8`` (0x829D).
+    - ``shutter_speed`` — ExposureTime as a ``(num, den)`` tuple, e.g.
+      ``(1, 250)`` for 1/250s or ``(2, 1)`` for a 2-second exposure
+      (0x829A). Kept in rational form so the formatter can render the
+      original fraction without floating-point round-tripping.
     - ``iso`` — ISOSpeedRatings as an int (0x8827).
 
     Hand-rolled reader; no Pillow dependency.
@@ -229,8 +236,15 @@ def get_exif_metadata(filepath):
     if isinstance(model, str) and model:
         meta["model"] = model
     aperture = exif_ifd.get(0x829D)
-    if isinstance(aperture, (int, float)) and aperture > 0:
-        meta["aperture"] = float(aperture)
+    if isinstance(aperture, tuple):
+        num, den = aperture
+        if num > 0 and den > 0:
+            meta["aperture"] = num / den
+    shutter = exif_ifd.get(0x829A)
+    if isinstance(shutter, tuple):
+        num, den = shutter
+        if num > 0 and den > 0:
+            meta["shutter_speed"] = (num, den)
     iso = exif_ifd.get(0x8827)
     if isinstance(iso, int) and iso > 0:
         meta["iso"] = iso

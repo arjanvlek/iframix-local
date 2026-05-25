@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+import math
 import os
 import random
 import re
@@ -30,6 +31,33 @@ logger = logging.getLogger(__name__)
 def _format_fnumber(f):
     """Format an aperture as ``f/2.8`` / ``f/4`` (no trailing .0)."""
     return f"f/{int(f)}" if f == int(f) else f"f/{f:.1f}"
+
+
+def _format_shutter_speed(rational):
+    """Format an EXIF ExposureTime ``(num, den)`` rational as a
+    shutter-speed string, matching how cameras and photo apps display
+    it:
+
+    - Whole-second exposures: ``"30s"``, ``"2s"``.
+    - Sub-second exposures simplifying to ``1/N``: ``"1/250s"``.
+    - Everything else: decimal seconds with one digit, ``"1.5s"``.
+
+    Returns ``None`` if the rational is missing or invalid so the
+    caption builder can simply skip the field.
+    """
+    if not isinstance(rational, tuple) or len(rational) != 2:
+        return None
+    num, den = rational
+    if num <= 0 or den <= 0:
+        return None
+    g = math.gcd(num, den)
+    num //= g
+    den //= g
+    if den == 1:
+        return f"{num}s"
+    if num == 1:
+        return f"1/{den}s"
+    return f"{num/den:.1f}s"
 
 
 # Catalog sizes the webapp uses on 16:9 displays. The same id range (1..5
@@ -104,11 +132,14 @@ def build_ai_remark(filename, filepath):
 
     - ``title`` is the capture time from DateTimeOriginal (falling back
       to the file's mtime when EXIF is absent).
-    - ``desc`` joins the camera model, aperture, and ISO (whichever are
-      present) with a middle-dot separator, e.g.
-      ``"Canon EOS 5D Mark IV · f/2.8 · ISO 400"``. Falls back to the
-      filename stem when none of those tags are present (screenshots,
-      stripped metadata, etc.).
+    - ``desc`` joins the camera model, aperture, shutter speed, and
+      ISO (whichever are present) with a middle-dot separator, e.g.
+      ``"Canon EOS 5D Mark IV · f/2.8 · 1/250s · ISO 400"``.
+      Each field is included only when the corresponding EXIF tag was
+      readable; cameras that strip ExposureTime simply lose the
+      shutter-speed segment, the rest of the caption is unaffected.
+      Falls back to the filename stem when none of those tags are
+      present (screenshots, stripped metadata, etc.).
     """
     meta = get_exif_metadata(filepath)
 
@@ -131,6 +162,9 @@ def build_ai_remark(filename, filepath):
         parts.append(meta["model"])
     if meta.get("aperture"):
         parts.append(_format_fnumber(meta["aperture"]))
+    shutter = _format_shutter_speed(meta.get("shutter_speed"))
+    if shutter:
+        parts.append(shutter)
     if meta.get("iso"):
         parts.append(f"ISO {meta['iso']}")
     desc = " \u00b7 ".join(parts) if parts else os.path.splitext(filename)[0]

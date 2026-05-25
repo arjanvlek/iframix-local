@@ -54,7 +54,8 @@ class TestExifDatetime:
 
 class TestExifMetadata:
     """Unit tests for get_exif_metadata — the richer reader that also
-    extracts camera model (0x0110), aperture (0x829D), and ISO (0x8827).
+    extracts camera model (0x0110), aperture (0x829D), shutter speed
+    (0x829A), and ISO (0x8827).
     """
 
     def test_reads_model_aperture_iso_together(self, tmp_path):
@@ -65,6 +66,7 @@ class TestExifMetadata:
             exif_entries=[
                 (0x9003, 2, "2023:07:14 09:30:45"),
                 (0x829D, 5, (28, 10)),   # f/2.8
+                (0x829A, 5, (1, 250)),   # 1/250s
                 (0x8827, 3, 400),        # ISO 400 (SHORT)
             ],
         ))
@@ -73,8 +75,49 @@ class TestExifMetadata:
             "datetime": "2023:07:14 09:30:45",
             "model": "Canon EOS 5D Mark IV",
             "aperture": 2.8,
+            "shutter_speed": (1, 250),
             "iso": 400,
         }
+
+    def test_shutter_speed_preserved_as_rational(self, tmp_path):
+        """ExposureTime (0x829A) is kept as a ``(num, den)`` tuple so
+        the caption formatter can render the original fraction without
+        float→fraction guessing."""
+        from src.api.utils import get_exif_metadata
+        path = tmp_path / "shutter.jpg"
+        path.write_bytes(build_jpeg_with_exif(
+            exif_entries=[(0x829A, 5, (1, 8000))],
+        ))
+        assert get_exif_metadata(str(path)).get("shutter_speed") == (1, 8000)
+
+    def test_shutter_speed_long_exposure_rational(self, tmp_path):
+        """Whole-second exposures arrive as (N, 1)."""
+        from src.api.utils import get_exif_metadata
+        path = tmp_path / "longexp.jpg"
+        path.write_bytes(build_jpeg_with_exif(
+            exif_entries=[(0x829A, 5, (30, 1))],
+        ))
+        assert get_exif_metadata(str(path)).get("shutter_speed") == (30, 1)
+
+    def test_shutter_speed_with_zero_denominator_is_skipped(self, tmp_path):
+        """A broken ExposureTime rational must not crash or appear in
+        the metadata (mirrors the aperture handling)."""
+        from src.api.utils import get_exif_metadata
+        path = tmp_path / "broken_shutter.jpg"
+        path.write_bytes(build_jpeg_with_exif(
+            exif_entries=[(0x829A, 5, (1, 0))],
+        ))
+        assert "shutter_speed" not in get_exif_metadata(str(path))
+
+    def test_shutter_speed_with_zero_numerator_is_skipped(self, tmp_path):
+        """A nonsensical 0/N exposure is dropped rather than rendered
+        as ``0s``."""
+        from src.api.utils import get_exif_metadata
+        path = tmp_path / "zero_shutter.jpg"
+        path.write_bytes(build_jpeg_with_exif(
+            exif_entries=[(0x829A, 5, (0, 250))],
+        ))
+        assert "shutter_speed" not in get_exif_metadata(str(path))
 
     def test_iso_as_long_type(self, tmp_path):
         """Some cameras store ISO as LONG (type 4) instead of SHORT."""
@@ -127,14 +170,86 @@ class TestBuildAiRemark:
             exif_entries=[
                 (0x9003, 2, "2023:07:14 09:30:45"),
                 (0x829D, 5, (28, 10)),
+                (0x829A, 5, (1, 250)),
                 (0x8827, 3, 400),
             ],
         ))
         remark = json.loads(build_ai_remark("IMG_6995.JPG", str(path)))
         assert remark == {
             "title": "July 14, 2023 · 09.30",
-            "desc": "Canon EOS 5D Mark IV \u00b7 f/2.8 \u00b7 ISO 400",
+            "desc": ("Canon EOS 5D Mark IV \u00b7 f/2.8 \u00b7 1/250s "
+                     "\u00b7 ISO 400"),
         }
+
+    def test_desc_includes_long_exposure_shutter(self, tmp_path):
+        """A 30-second exposure renders as ``30s`` (whole-second form)."""
+        from src.api.handlers.media import build_ai_remark
+        path = tmp_path / "night.jpg"
+        path.write_bytes(build_jpeg_with_exif(
+            ifd0_entries=[(0x0110, 2, "NIKON Z 6")],
+            exif_entries=[
+                (0x9003, 2, "2024:11:01 22:15:00"),
+                (0x829A, 5, (30, 1)),
+                (0x8827, 3, 100),
+            ],
+        ))
+        remark = json.loads(build_ai_remark("night.jpg", str(path)))
+        assert remark["desc"] == "NIKON Z 6 · 30s · ISO 100"
+
+    def test_desc_simplifies_unreduced_shutter_rational(self, tmp_path):
+        """Cameras sometimes store (10, 1500) instead of (1, 150);
+        the formatter must reduce via gcd before rendering."""
+        from src.api.handlers.media import build_ai_remark
+        path = tmp_path / "reduce.jpg"
+        path.write_bytes(build_jpeg_with_exif(
+            exif_entries=[(0x829A, 5, (10, 1500))],
+        ))
+        remark = json.loads(build_ai_remark("reduce.jpg", str(path)))
+        assert remark["desc"] == "1/150s"
+
+    def test_desc_uses_decimal_seconds_for_oddball_shutter(self, tmp_path):
+        """A 2.5-second exposure stored as (5, 2) reduces to (5, 2) -
+        neither whole seconds nor a 1/N fraction - so the formatter
+        falls back to one-decimal seconds."""
+        from src.api.handlers.media import build_ai_remark
+        path = tmp_path / "two_and_a_half.jpg"
+        path.write_bytes(build_jpeg_with_exif(
+            exif_entries=[(0x829A, 5, (5, 2))],
+        ))
+        remark = json.loads(build_ai_remark("two_and_a_half.jpg", str(path)))
+        assert remark["desc"] == "2.5s"
+
+    def test_desc_omits_shutter_when_missing_from_exif(self, tmp_path):
+        """A camera that strips ExposureTime should still produce a
+        useful desc - the other fields render normally and the
+        shutter-speed segment is simply absent."""
+        from src.api.handlers.media import build_ai_remark
+        path = tmp_path / "no_shutter.jpg"
+        path.write_bytes(build_jpeg_with_exif(
+            ifd0_entries=[(0x0110, 2, "Canon EOS R5")],
+            exif_entries=[
+                (0x9003, 2, "2024:05:01 12:00:00"),
+                (0x829D, 5, (40, 10)),  # f/4
+                (0x8827, 3, 200),
+            ],
+        ))
+        remark = json.loads(build_ai_remark("no_shutter.jpg", str(path)))
+        assert remark["desc"] == "Canon EOS R5 · f/4 · ISO 200"
+
+    def test_desc_omits_shutter_when_rational_is_broken(self, tmp_path):
+        """Defensive: a malformed ExposureTime (den=0) must not appear
+        in the caption - same fallback as a missing tag."""
+        from src.api.handlers.media import build_ai_remark
+        path = tmp_path / "broken_shutter.jpg"
+        path.write_bytes(build_jpeg_with_exif(
+            ifd0_entries=[(0x0110, 2, "NIKON Z 6")],
+            exif_entries=[
+                (0x9003, 2, "2024:05:01 12:00:00"),
+                (0x829A, 5, (1, 0)),
+            ],
+        ))
+        remark = json.loads(build_ai_remark("broken_shutter.jpg", str(path)))
+        assert remark["desc"] == "NIKON Z 6"
 
     def test_desc_uses_only_available_exif_fields(self, tmp_path):
         """Partial EXIF (only model + ISO, no aperture) must still
@@ -200,3 +315,38 @@ class TestBuildAiRemark:
         assert isinstance(result, str)
         parsed = json.loads(result)
         assert set(parsed.keys()) == {"title", "desc"}
+
+
+class TestFormatShutterSpeed:
+    """Unit tests for _format_shutter_speed - exercise the rational
+    formatter directly without building a JPEG, including the cases
+    where the caption builder should treat the result as absent."""
+
+    def test_simple_fast_shutter(self):
+        from src.api.handlers.media import _format_shutter_speed
+        assert _format_shutter_speed((1, 250)) == "1/250s"
+
+    def test_whole_second_exposure(self):
+        from src.api.handlers.media import _format_shutter_speed
+        assert _format_shutter_speed((2, 1)) == "2s"
+
+    def test_reduces_unsimplified_rational(self):
+        from src.api.handlers.media import _format_shutter_speed
+        assert _format_shutter_speed((10, 1500)) == "1/150s"
+
+    def test_returns_none_for_missing_value(self):
+        from src.api.handlers.media import _format_shutter_speed
+        assert _format_shutter_speed(None) is None
+
+    def test_returns_none_for_zero_denominator(self):
+        from src.api.handlers.media import _format_shutter_speed
+        assert _format_shutter_speed((1, 0)) is None
+
+    def test_returns_none_for_zero_numerator(self):
+        from src.api.handlers.media import _format_shutter_speed
+        assert _format_shutter_speed((0, 250)) is None
+
+    def test_returns_none_for_non_tuple(self):
+        """Defensive: callers may pass a stray int/float; never crash."""
+        from src.api.handlers.media import _format_shutter_speed
+        assert _format_shutter_speed(0.004) is None
