@@ -2,13 +2,12 @@
 import base64
 import json
 import os
-import struct
 import time
 
 import pytest
 import requests
 
-from tests.helpers import login, get_device_id
+from tests.helpers import login, get_device_id, make_png
 
 
 class TestAITemplateAssignment:
@@ -35,18 +34,13 @@ class TestAITemplateAssignment:
 
     @staticmethod
     def _png_with_dimensions(width, height):
-        """Build a minimal PNG file just long enough for get_image_size.
+        """Return a real PNG of the given dimensions.
 
-        ``get_image_size`` reads the first 30 bytes. We need: 8-byte
-        signature, 4-byte chunk length, 4-byte chunk type, 8-byte
-        width+height, plus a few trailing bytes. The file is not a valid
-        PNG to a strict decoder, but the dimension reader does not care.
+        The Pillow-based ``get_image_size`` decodes the header of a
+        genuine image, so the fixture is a real (flat-colour, hence tiny)
+        PNG rather than a hand-built byte stub.
         """
-        import struct
-        return (b"\x89PNG\r\n\x1a\n"
-                + b"\x00\x00\x00\x0dIHDR"
-                + struct.pack(">II", width, height)
-                + b"\x08\x02\x00\x00\x00")
+        return make_png(width, height)
 
     def _drop_ai_photo(self, api_server, filename, width, height,
                        device_id="42"):
@@ -201,16 +195,11 @@ class TestAITemplateAssignment:
         Hits the helper directly so the orientation logic is covered
         without HTTP plumbing in between.
         """
-        import struct
         from src.api.handlers.media import _pick_ai_template_for_image
 
         def _png(w, h):
             path = tmp_path / f"img_{w}x{h}.png"
-            path.write_bytes(
-                b"\x89PNG\r\n\x1a\n"
-                + b"\x00\x00\x00\x0dIHDR"
-                + struct.pack(">II", w, h)
-                + b"\x08\x02\x00\x00\x00")
+            path.write_bytes(make_png(w, h))
             return str(path)
 
         # Sample many calls to confirm both the type and the id range.

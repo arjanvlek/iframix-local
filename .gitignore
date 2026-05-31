@@ -22,6 +22,7 @@ icharguard.db-shm
 photos/
 photos_with_ai/
 photos_temp/
+thumbnails/
 logs/
 weather_icons/
 webapp/

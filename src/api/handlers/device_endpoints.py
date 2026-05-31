@@ -39,6 +39,8 @@ def _remove_device_directories(device_uuid, device_id):
     targets = [
         os.path.join(config.PHOTOS_DIR, str(device_id)),
         os.path.join(config.PHOTOS_AI_DIR, str(device_id)),
+        os.path.join(config.THUMBNAILS_DIR, "normal", str(device_id)),
+        os.path.join(config.THUMBNAILS_DIR, "ai", str(device_id)),
         os.path.join(config.LOGS_DIR, device_uuid),
     ]
     for path in targets:

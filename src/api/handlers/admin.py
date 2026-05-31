@@ -232,6 +232,8 @@ class AdminMixin:
                             </div>
                             <div class="photo-grid"
                                  data-photo-type="normal"></div>
+                            <div class="photo-more"
+                                 data-photo-type="normal"></div>
                             <div class="photo-actions">
                                 <button class="btn off tiny photo-del-btn"
                                         type="button"
@@ -245,6 +247,8 @@ class AdminMixin:
                                     data-photo-type="ai">0</span>)
                             </div>
                             <div class="photo-grid"
+                                 data-photo-type="ai"></div>
+                            <div class="photo-more"
                                  data-photo-type="ai"></div>
                             <div class="photo-actions">
                                 <button class="btn off tiny photo-del-btn"

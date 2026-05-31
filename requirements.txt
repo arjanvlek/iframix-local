@@ -1,3 +1,5 @@
 paho-mqtt==2.1.0
 pyreadline3==3.5.4; sys_platform == 'win32'
 dnspython==2.7.0
+# 12.x and up requires Python 3.10
+Pillow==11.3.0

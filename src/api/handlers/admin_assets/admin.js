@@ -332,8 +332,14 @@ async function deleteCalendar(card, calId) {
     }
 }
 
-// Photo listing (per type). For AI photos, the thumbnail is clickable
-// and opens the template-picker modal.
+// Photo listing (per type), paginated. Photos are fetched a page at a
+// time from the lightweight /admin/photos endpoint and rendered as
+// lazy-loading thumbnails (served downscaled + long-cached from
+// /admin/thumb), so opening a card with hundreds of photos no longer
+// downloads every full-resolution image up front. For AI photos the
+// thumbnail is clickable and opens the template-picker modal.
+const PHOTO_PAGE_SIZE = 24;
+
 function loadPhotos(card) {
     const deviceId = card.dataset.deviceId;
     for (const type of ["normal", "ai"]) {
@@ -342,53 +348,100 @@ function loadPhotos(card) {
         const count = card.querySelector(
             `.ps-count[data-photo-type="${type}"]`);
         if (!grid) continue;
-        loadPhotosOfType(deviceId, type, grid, count);
+        // Fresh load: page 1, replacing whatever was there.
+        loadPhotoPage(deviceId, type, grid, count, 1, false);
     }
 }
 
-async function loadPhotosOfType(deviceId, type, grid, count) {
+async function loadPhotoPage(deviceId, type, grid, count, page, append) {
     try {
         const data = await getJSON(
-            `/api/ipad/media/mediaList?device_id=${deviceId}` +
-            `&type=${type}&limit=60`);
-        const items = (data && data.data && data.data.list) || [];
-        grid.innerHTML = "";
+            `/admin/photos?device_id=${deviceId}&type=${type}` +
+            `&page=${page}&page_size=${PHOTO_PAGE_SIZE}`);
+        const d = (data && data.data) || {};
+        const items = d.list || [];
+        const total = d.total || 0;
+        if (!append) grid.innerHTML = "";
         for (const m of items) {
-            const url = m && m.asset && m.asset.url;
-            if (!url) continue;
-            const el = document.createElement("div");
-            el.className = `photo-thumb${type === "ai" ? " ai" : ""}`;
-            el.title = `${m.asset.filename || ""} (id ${m.id})`;
-            el.style.backgroundImage =
-                `url("${url.replace(/"/g, "%22")}")`;
-            // Every thumbnail carries its media id so a bulk delMedia can
-            // collect the checked ones regardless of normal/AI type.
-            el.dataset.mediaId = m.id;
-            if (type === "ai") {
-                el.dataset.url = url;
-                el.dataset.filename = m.asset.filename || "";
-                el.dataset.templateId = m.template_id || 0;
-                el.dataset.templateType = m.template_type || 1;
-                el.dataset.display = m.display || "";
-                el.addEventListener("click", () => openTemplateModal(el));
-            }
-            // Selection checkbox for bulk delete. stopPropagation keeps a
-            // click on the checkbox from also opening the AI template modal.
-            const cb = document.createElement("input");
-            cb.type = "checkbox";
-            cb.className = "photo-select";
-            cb.title = "Select for deletion";
-            cb.addEventListener("click", (e) => e.stopPropagation());
-            cb.addEventListener("change", () => {
-                el.classList.toggle("selected", cb.checked);
-                updateDeleteButton(grid);
-            });
-            el.appendChild(cb);
-            grid.appendChild(el);
+            grid.appendChild(buildThumb(type, m));
         }
-        if (count) count.textContent = items.length;
+        grid.dataset.page = page;
+        grid.dataset.total = total;
+        if (count) count.textContent = total;
+        updateLoadMore(grid, deviceId, type, count, total);
         updateDeleteButton(grid);
     } catch {}
+}
+
+function buildThumb(type, m) {
+    const el = document.createElement("div");
+    el.className = `photo-thumb${type === "ai" ? " ai" : ""}`;
+    el.title = `${m.filename || ""} (id ${m.id})`;
+    // Every thumbnail carries its media id so a bulk delMedia can
+    // collect the checked ones regardless of normal/AI type.
+    el.dataset.mediaId = m.id;
+
+    const img = document.createElement("img");
+    img.className = "thumb-img";
+    img.loading = "lazy";
+    img.decoding = "async";
+    img.alt = m.filename || "";
+    img.src = m.thumb_url;
+    el.appendChild(img);
+
+    if (type === "ai") {
+        // The modal preview uses the full-resolution image; the grid tile
+        // uses the cheap thumbnail above.
+        el.dataset.url = m.url;
+        el.dataset.filename = m.filename || "";
+        el.dataset.templateId = m.template_id || 0;
+        el.dataset.templateType = m.template_type || 1;
+        el.dataset.display = m.display || "";
+        el.addEventListener("click", () => openTemplateModal(el));
+    }
+    // Selection checkbox for bulk delete. stopPropagation keeps a click on
+    // the checkbox from also opening the AI template modal.
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "photo-select";
+    cb.title = "Select for deletion";
+    cb.addEventListener("click", (e) => e.stopPropagation());
+    cb.addEventListener("change", () => {
+        el.classList.toggle("selected", cb.checked);
+        updateDeleteButton(el.closest(".photo-grid"));
+    });
+    el.appendChild(cb);
+    return el;
+}
+
+// Render (or clear) the "Load more" control beneath a grid based on how
+// many of the total photos are currently loaded.
+function updateLoadMore(grid, deviceId, type, count, total) {
+    const section = grid.closest(".photo-section");
+    if (!section) return;
+    const more = section.querySelector(
+        `.photo-more[data-photo-type="${type}"]`);
+    if (!more) return;
+    const loaded = grid.querySelectorAll(".photo-thumb").length;
+    more.innerHTML = "";
+    if (loaded < total) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "btn neutral tiny load-more-btn";
+        btn.textContent = `Load more (${loaded} of ${total})`;
+        btn.addEventListener("click", () => {
+            const next = (parseInt(grid.dataset.page, 10) || 1) + 1;
+            btn.disabled = true;
+            btn.textContent = "Loading...";
+            loadPhotoPage(deviceId, type, grid, count, next, true);
+        });
+        more.appendChild(btn);
+    } else if (total > PHOTO_PAGE_SIZE) {
+        const note = document.createElement("span");
+        note.className = "photo-more-note";
+        note.textContent = `All ${total} shown`;
+        more.appendChild(note);
+    }
 }
 
 // Reflect the number of checked thumbnails on the section's

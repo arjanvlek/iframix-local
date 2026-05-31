@@ -80,6 +80,22 @@ Next, download the Python libraries the server needs.
 pip install -r requirements.txt
 ```
 
+> [!NOTE]
+> **If Pillow fails to install** with an error like `has different name in metadata: 'UNKNOWN'` (common on Raspberry Pi OS, which ships an old pip), upgrade the packaging tools first, then retry:
+> ```bash
+> pip install --upgrade pip setuptools wheel
+> pip install -r requirements.txt
+> ```
+
+> [!NOTE]
+> **Raspberry Pi 1 / Pi Zero users:** there is no prebuilt Pillow for this system's architecture, so it must be completely built (compiled) from source. On the original Pi Model B, this can take **45 minutes to well over an hour**. If you see `Building wheel for Pillow (pyproject.toml)`: it is not hung — leave the build running.
+>
+> To skip the compile entirely, use the system Pillow from your package manager instead:
+> ```bash
+> sudo apt install python3-pil
+> ```
+> This installs an older prebuilt Pillow (8.x), which is fine for this project. If you do this, remove the `Pillow==11.3.0` line from `requirements.txt` on that machine so pip doesn't try to build it.
+
 Finally, open a terminal on your server machine and `cd` into the folder where you downloaded this project. 
 Use this for the next steps.
 
@@ -260,6 +276,12 @@ may have to proxy this project through your Web Server (search for 'apache rever
 **Docker says it can't start the container.**
 - On Windows / macOS: Make sure Docker Desktop is running (look for the whale icon in your menu bar or system tray).
 - On Linux, make sure `containerd` and `docker.service` are running. Run `docker ps` to test if Docker works.
+
+**The API server crashes / restarts when I open a photo-heavy device in the admin panel (low-RAM machines like a 512 MB Raspberry Pi).**
+- Opening a card generates thumbnails on the fly, and several can be generated at once, which uses a lot of memory the first time (before they are cached).
+- By default the server already limits this to **one thumbnail at a time**, which is enough for a 512 MB machine. If you still run out of memory, the only knob is to keep it at one (it cannot go lower).
+- If you have **more** RAM and want faster first loads, you can allow more in parallel by setting the `IFRAMIX_THUMB_CONCURRENCY` environment variable before starting the API server, e.g. `IFRAMIX_THUMB_CONCURRENCY=3 python3 icharguard-api.py`.
+- Thumbnails are cached on disk after the first view, so the memory spike only happens once per photo.
 
 ## Documentation
 

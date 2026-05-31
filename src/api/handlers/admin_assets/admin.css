@@ -290,6 +290,33 @@ tr:hover { background: #f9f9f9; }
 .photo-thumb.ai:hover::after {
     box-shadow: inset 0 0 0 2px #1565c0;
 }
+/* The thumbnail image fills the square tile. loading="lazy" + decoding
+   async means off-screen tiles are not fetched until scrolled into view,
+   so a card with hundreds of photos only downloads what's visible. */
+.photo-thumb .thumb-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 3px;
+    display: block;
+}
+/* "Load more" row beneath each photo grid. */
+.photo-more {
+    margin-top: 6px;
+    text-align: center;
+}
+.photo-more:empty {
+    display: none;
+}
+.photo-more .load-more-btn {
+    width: 100%;
+    font-size: 0.8em;
+}
+.photo-more .photo-more-note {
+    color: #999;
+    font-size: 0.75em;
+    font-style: italic;
+}
 
 /* Template-picker modal */
 .modal-backdrop {

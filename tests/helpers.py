@@ -3,6 +3,7 @@
 Originally inlined in tests/test_api.py and tests/test_router.py. Lifted
 here so per-feature split files can import them without duplication.
 """
+import io
 import json
 import os
 import sqlite3
@@ -13,6 +14,7 @@ import uuid
 
 import paho.mqtt.client as mqtt
 import requests
+from PIL import Image
 
 
 CHARGER_UUID = "IFP_94_51_DC_66_96_7E_36_BC"
@@ -190,7 +192,16 @@ def build_jpeg_with_exif(ifd0_entries=None, exif_entries=None):
 
     app1_payload = b"Exif\x00\x00" + tiff
     app1 = b"\xff\xe1" + _s.pack(">H", len(app1_payload) + 2) + app1_payload
-    return b"\xff\xd8" + app1 + b"\xff\xd9"
+    # Wrap the hand-built EXIF APP1 in a real, decodable JPEG frame so the
+    # Pillow-based reader can open it: a bare SOI+APP1+EOI carries no image
+    # data and Pillow rejects it. We render a tiny real JPEG and splice the
+    # APP1 segment in right after the SOI marker. The hand-crafted EXIF
+    # bytes are preserved verbatim, so exact rationals (including unreduced
+    # values like 10/1500 and broken den=0 entries) round-trip unchanged.
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 6), (127, 127, 127)).save(buf, "JPEG")
+    real = buf.getvalue()
+    return real[:2] + app1 + real[2:]
 
 
 def jpeg_with_datetime(dt_str, tag=0x9003, in_ifd0=False):
@@ -198,3 +209,15 @@ def jpeg_with_datetime(dt_str, tag=0x9003, in_ifd0=False):
     if in_ifd0:
         return build_jpeg_with_exif(ifd0_entries=[(tag, 2, dt_str)])
     return build_jpeg_with_exif(exif_entries=[(tag, 2, dt_str)])
+
+
+def make_png(width, height, color=(120, 30, 200)):
+    """Return PNG bytes for a real image of the given pixel dimensions.
+
+    Replaces the old hand-built "minimal PNG" fixtures: the Pillow-based
+    ``get_image_size`` needs a genuinely decodable image, so the test
+    fixtures produce real (flat-colour, hence tiny) PNGs.
+    """
+    buf = io.BytesIO()
+    Image.new("RGB", (width, height), color).save(buf, "PNG")
+    return buf.getvalue()

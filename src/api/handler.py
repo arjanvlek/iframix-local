@@ -249,6 +249,14 @@ class APIHandler(
             self.handle_admin_chargers()
             return
 
+        if path == "/admin/photos":
+            self.handle_admin_photos(params)
+            return
+
+        if path.startswith("/admin/thumb/"):
+            self.handle_admin_thumb(path)
+            return
+
         # API endpoints
         if path == "/api/ipad/device/index":
             self.handle_device_index(params)

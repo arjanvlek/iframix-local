@@ -7,10 +7,10 @@ import json
 import os
 import random
 import string
-import struct
 import time
 
 import paho.mqtt.publish as mqtt_publish
+from PIL import ExifTags, Image
 
 from src.api import config
 
@@ -92,120 +92,42 @@ def generate_upload_token(expire=3600):
 
 
 def get_image_size(filepath):
-    """Get image dimensions from JPEG/PNG file headers."""
-    with open(filepath, "rb") as f:
-        header = f.read(30)
-        # PNG
-        if header[:8] == b"\x89PNG\r\n\x1a\n":
-            return struct.unpack(">II", header[16:24])
-        # JPEG
-        if header[:2] == b"\xff\xd8":
-            f.seek(2)
-            while True:
-                marker = f.read(2)
-                if len(marker) < 2 or marker[0] != 0xFF:
-                    break
-                if marker[1] in (0xC0, 0xC1, 0xC2):
-                    f.read(3)  # length + precision
-                    h, w = struct.unpack(">HH", f.read(4))
-                    return w, h
-                length = struct.unpack(">H", f.read(2))[0]
-                f.seek(length - 2, 1)
-    return 0, 0
+    """Return ``(width, height)`` in pixels, or ``(0, 0)`` when the file
+    cannot be read as an image.
 
-
-def _read_exif_ifd(tiff, offset, endian):
-    """Read one IFD block and return a ``{tag: value}`` dict.
-
-    Decodes the TIFF/EXIF entry types we actually consume:
-    ASCII (strings), SHORT/LONG (ints, count=1), and RATIONAL
-    (``(num, den)`` tuples, count=1). Other types are skipped. The
-    rational form is preserved so callers like the shutter-speed
-    formatter can render the original fraction (``1/250s``) without
-    floating-point round-tripping.
-    """
-    out = {}
-    if offset + 2 > len(tiff):
-        return out
-    count = struct.unpack(endian + "H", tiff[offset:offset + 2])[0]
-    base = offset + 2
-    for i in range(count):
-        ent = base + i * 12
-        if ent + 12 > len(tiff):
-            break
-        tag, type_, n = struct.unpack(endian + "HHI", tiff[ent:ent + 8])
-        value_field = tiff[ent + 8:ent + 12]
-        if type_ == 2:  # ASCII
-            if n <= 4:
-                raw = value_field[:n]
-            else:
-                val_off = struct.unpack(endian + "I", value_field)[0]
-                if val_off + n > len(tiff):
-                    continue
-                raw = tiff[val_off:val_off + n]
-            out[tag] = raw.decode("ascii", errors="replace").rstrip("\x00 ")
-        elif type_ == 3 and n == 1:  # SHORT, fits in first 2 bytes
-            out[tag] = struct.unpack(endian + "H", value_field[:2])[0]
-        elif type_ == 4 and n == 1:  # LONG, fits inline
-            out[tag] = struct.unpack(endian + "I", value_field)[0]
-        elif type_ == 5 and n == 1:  # RATIONAL (8 bytes, always at offset)
-            val_off = struct.unpack(endian + "I", value_field)[0]
-            if val_off + 8 > len(tiff):
-                continue
-            num, den = struct.unpack(
-                endian + "II", tiff[val_off:val_off + 8])
-            if den:
-                out[tag] = (num, den)
-    return out
-
-
-def _extract_exif_ifds(filepath):
-    """Walk JPEG segments to find the EXIF APP1, parse it, and return
-    ``(ifd0, exif_ifd)`` dicts. Returns ``(None, None)`` if the file
-    isn't a JPEG or has no EXIF segment.
+    Backed by Pillow, which parses only the header to learn the size
+    (it does not decode the full pixel data), so this stays cheap even
+    for large photos.
     """
     try:
-        with open(filepath, "rb") as f:
-            if f.read(2) != b"\xff\xd8":
-                return None, None
-            while True:
-                marker = f.read(2)
-                if len(marker) < 2 or marker[0] != 0xFF:
-                    return None, None
-                # Start-of-scan or end-of-image — no more metadata segments
-                if marker[1] in (0xD9, 0xDA):
-                    return None, None
-                length_bytes = f.read(2)
-                if len(length_bytes) < 2:
-                    return None, None
-                seg_len = struct.unpack(">H", length_bytes)[0]
-                data_len = seg_len - 2
-                if marker[1] == 0xE1:  # APP1
-                    data = f.read(data_len)
-                    if data[:6] != b"Exif\x00\x00":
-                        continue  # XMP or other APP1; keep scanning
-                    tiff = data[6:]
-                    if len(tiff) < 8:
-                        return None, None
-                    bo = tiff[:2]
-                    if bo == b"II":
-                        endian = "<"
-                    elif bo == b"MM":
-                        endian = ">"
-                    else:
-                        return None, None
-                    if struct.unpack(endian + "H", tiff[2:4])[0] != 0x002A:
-                        return None, None
-                    ifd0_off = struct.unpack(endian + "I", tiff[4:8])[0]
-                    ifd0 = _read_exif_ifd(tiff, ifd0_off, endian)
-                    exif_ifd = {}
-                    exif_off = ifd0.get(0x8769)
-                    if isinstance(exif_off, int):
-                        exif_ifd = _read_exif_ifd(tiff, exif_off, endian)
-                    return ifd0, exif_ifd
-                f.seek(data_len, 1)
-    except (OSError, struct.error):
-        return None, None
+        with Image.open(filepath) as im:
+            return im.size
+    except Exception:
+        return 0, 0
+
+
+def _rational_tuple(value):
+    """Coerce an EXIF rational to a plain ``(num, den)`` int tuple.
+
+    Pillow returns rationals as ``IFDRational``, which exposes the raw
+    ``numerator``/``denominator`` exactly as stored (unreduced), so a
+    value like ``10/1500`` survives as ``(10, 1500)`` for the
+    shutter-speed formatter to gcd-reduce. Returns ``None`` for values
+    that are not rational-like.
+    """
+    if isinstance(value, tuple) and len(value) == 2:
+        try:
+            return int(value[0]), int(value[1])
+        except (TypeError, ValueError):
+            return None
+    num = getattr(value, "numerator", None)
+    den = getattr(value, "denominator", None)
+    if num is None or den is None:
+        return None
+    try:
+        return int(num), int(den)
+    except (TypeError, ValueError):
+        return None
 
 
 def get_exif_metadata(filepath):
@@ -222,30 +144,34 @@ def get_exif_metadata(filepath):
       original fraction without floating-point round-tripping.
     - ``iso`` — ISOSpeedRatings as an int (0x8827).
 
-    Hand-rolled reader; no Pillow dependency.
+    Reads via Pillow's EXIF support. Returns ``{}`` when the file isn't
+    a readable image or carries no EXIF.
     """
-    ifd0, exif_ifd = _extract_exif_ifds(filepath)
-    if ifd0 is None:
+    try:
+        with Image.open(filepath) as im:
+            exif = im.getexif()
+            exif_ifd = exif.get_ifd(ExifTags.IFD.Exif)
+    except Exception:
         return {}
 
     meta = {}
-    dt = exif_ifd.get(0x9003) or exif_ifd.get(0x9004) or ifd0.get(0x0132)
-    if isinstance(dt, str) and dt:
-        meta["datetime"] = dt
-    model = ifd0.get(0x0110)
-    if isinstance(model, str) and model:
-        meta["model"] = model
-    aperture = exif_ifd.get(0x829D)
-    if isinstance(aperture, tuple):
-        num, den = aperture
-        if num > 0 and den > 0:
-            meta["aperture"] = num / den
-    shutter = exif_ifd.get(0x829A)
-    if isinstance(shutter, tuple):
-        num, den = shutter
-        if num > 0 and den > 0:
-            meta["shutter_speed"] = (num, den)
+    dt = exif_ifd.get(0x9003) or exif_ifd.get(0x9004) or exif.get(0x0132)
+    if isinstance(dt, str) and dt.rstrip("\x00 "):
+        meta["datetime"] = dt.rstrip("\x00 ")
+    model = exif.get(0x0110)
+    if isinstance(model, str) and model.rstrip("\x00 "):
+        meta["model"] = model.rstrip("\x00 ")
+    aperture = _rational_tuple(exif_ifd.get(0x829D))
+    if aperture and aperture[0] > 0 and aperture[1] > 0:
+        meta["aperture"] = aperture[0] / aperture[1]
+    shutter = _rational_tuple(exif_ifd.get(0x829A))
+    if shutter and shutter[0] > 0 and shutter[1] > 0:
+        meta["shutter_speed"] = shutter
     iso = exif_ifd.get(0x8827)
+    # ISOSpeedRatings can be a single value or a sequence (SHORT count>1);
+    # the first entry is the effective ISO.
+    if isinstance(iso, (tuple, list)):
+        iso = iso[0] if iso else None
     if isinstance(iso, int) and iso > 0:
         meta["iso"] = iso
     return meta
@@ -253,7 +179,7 @@ def get_exif_metadata(filepath):
 
 def get_exif_datetime_original(filepath):
     """Return the EXIF DateTimeOriginal (``"YYYY:MM:DD HH:MM:SS"``) or
-    ``None`` if the file isn't a JPEG, has no EXIF APP1 segment, or
+    ``None`` if the file isn't a readable image, carries no EXIF, or
     lacks any date-time tag. Thin wrapper around ``get_exif_metadata``
     kept for call sites that only care about the capture timestamp.
     """

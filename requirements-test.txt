@@ -2,3 +2,5 @@ paho-mqtt==2.1.0
 pytest==9.0.3
 requests==2.33.1
 testcontainers==4.14.2
+# 12.x and up requires Python 3.10
+Pillow==11.3.0
