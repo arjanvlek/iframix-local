@@ -361,8 +361,10 @@ async function loadPhotosOfType(deviceId, type, grid, count) {
             el.title = `${m.asset.filename || ""} (id ${m.id})`;
             el.style.backgroundImage =
                 `url("${url.replace(/"/g, "%22")}")`;
+            // Every thumbnail carries its media id so a bulk delMedia can
+            // collect the checked ones regardless of normal/AI type.
+            el.dataset.mediaId = m.id;
             if (type === "ai") {
-                el.dataset.mediaId = m.id;
                 el.dataset.url = url;
                 el.dataset.filename = m.asset.filename || "";
                 el.dataset.templateId = m.template_id || 0;
@@ -370,10 +372,72 @@ async function loadPhotosOfType(deviceId, type, grid, count) {
                 el.dataset.display = m.display || "";
                 el.addEventListener("click", () => openTemplateModal(el));
             }
+            // Selection checkbox for bulk delete. stopPropagation keeps a
+            // click on the checkbox from also opening the AI template modal.
+            const cb = document.createElement("input");
+            cb.type = "checkbox";
+            cb.className = "photo-select";
+            cb.title = "Select for deletion";
+            cb.addEventListener("click", (e) => e.stopPropagation());
+            cb.addEventListener("change", () => {
+                el.classList.toggle("selected", cb.checked);
+                updateDeleteButton(grid);
+            });
+            el.appendChild(cb);
             grid.appendChild(el);
         }
         if (count) count.textContent = items.length;
+        updateDeleteButton(grid);
     } catch {}
+}
+
+// Reflect the number of checked thumbnails on the section's
+// "Delete selected (N)" button and enable/disable it accordingly.
+function updateDeleteButton(grid) {
+    const section = grid.closest(".photo-section");
+    if (!section) return;
+    const btn = section.querySelector(".photo-del-btn");
+    if (!btn) return;
+    const n = grid.querySelectorAll("input.photo-select:checked").length;
+    btn.disabled = n === 0;
+    btn.textContent = `Delete selected (${n})`;
+}
+
+// Bulk-delete the checked photos of one type via the same delMedia
+// endpoint / MQTT event the display app uses when removing photos.
+async function deleteSelectedPhotos(card, type) {
+    const deviceId = card.dataset.deviceId;
+    const grid = card.querySelector(
+        `.photo-grid[data-photo-type="${type}"]`);
+    if (!grid) return;
+    const ids = Array.from(
+        grid.querySelectorAll("input.photo-select:checked"))
+        .map((cb) => cb.closest(".photo-thumb").dataset.mediaId)
+        .filter(Boolean);
+    if (!ids.length) return;
+    if (!confirm(
+        `Delete ${ids.length} ${type} photo(s)? This cannot be undone.`)) {
+        return;
+    }
+    setStatus(card, "upload", `Deleting ${ids.length} photo(s)...`, "");
+    try {
+        const data = await postJSON("/api/ipad/media/delMedia", {
+            id: ids,
+            device_id: parseInt(deviceId, 10),
+        });
+        if (data.code === 1) {
+            setStatus(card, "upload",
+                `Deleted ${ids.length} photo(s)`, "ok");
+            // delMedia removes files in a background thread, so give it a
+            // moment before re-reading the (now shorter) list.
+            setTimeout(() => loadPhotos(card), 500);
+        } else {
+            setStatus(card, "upload",
+                `Delete failed: ${data.msg || "?"}`, "error");
+        }
+    } catch (e) {
+        setStatus(card, "upload", `Delete error: ${e}`, "error");
+    }
 }
 
 // --- Template-picker modal ---
@@ -762,6 +826,12 @@ document.querySelectorAll(".card").forEach(function(card) {
       '.subform[data-form="delete"] .delete-btn');
     if (delBtn) delBtn.addEventListener(
       "click", function() { deleteDevice(card); });
+
+    card.querySelectorAll('.photo-del-btn').forEach(function(btn) {
+        btn.addEventListener("click", function() {
+            deleteSelectedPhotos(card, btn.dataset.photoType);
+        });
+    });
 });
 
 function deleteDevice(card) {

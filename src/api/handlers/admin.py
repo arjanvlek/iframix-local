@@ -232,6 +232,12 @@ class AdminMixin:
                             </div>
                             <div class="photo-grid"
                                  data-photo-type="normal"></div>
+                            <div class="photo-actions">
+                                <button class="btn off tiny photo-del-btn"
+                                        type="button"
+                                        data-photo-type="normal" disabled>
+                                    Delete selected (0)</button>
+                            </div>
                         </div>
                         <div class="photo-section">
                             <div class="ps-label">
@@ -240,6 +246,12 @@ class AdminMixin:
                             </div>
                             <div class="photo-grid"
                                  data-photo-type="ai"></div>
+                            <div class="photo-actions">
+                                <button class="btn off tiny photo-del-btn"
+                                        type="button"
+                                        data-photo-type="ai" disabled>
+                                    Delete selected (0)</button>
+                            </div>
                         </div>
                     </div>
 

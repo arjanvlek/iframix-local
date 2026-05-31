@@ -116,6 +116,21 @@ class TestAdminPage:
         # And the JS must read data-aspect off the card.
         assert "card.dataset.aspect" in resp.text
 
+    def test_photo_delete_buttons_rendered_per_section(self, api_server):
+        """Each device card ships a "Delete selected" button for both
+        the normal and AI photo sections, and the JS wires bulk delete
+        to the same delMedia endpoint the display app uses."""
+        self.seed_session(api_server["url"], "del-uuid", 1920, 1080)
+        resp = requests.get(f"{api_server['url']}/admin")
+        assert resp.status_code == 200
+        # One delete button per section (normal + ai).
+        assert resp.text.count('class="btn off tiny photo-del-btn"') == 2
+        assert 'data-photo-type="normal"' in resp.text
+        assert 'data-photo-type="ai"' in resp.text
+        # Bulk delete posts to the delMedia endpoint.
+        assert "/api/ipad/media/delMedia" in resp.text
+        assert "deleteSelectedPhotos" in resp.text
+
     def test_picker_modal_ships_svg_preview_generator(self, api_server):
         """The modal renders SVG layout previews on each button rather
         than plain numbers. The generator function and the marker
