@@ -6,6 +6,10 @@ so your pictures stay in-house and devices keep working even if the manufacturer
 
 No firmware changes are needed. We simply tell your network "when devices ask for the cloud server, send them to my computer instead."
 
+<img src="./docs/iframix-local.jpg" alt="iFramix Local" width="600px"/>
+<br />
+<img src="./docs/iframix-local-admin.jpg" alt="iFramix Local - Admin Page" width="600px"/>
+
 ## Will this work for me?
 
 Yes - if you are tech-savvy, use an iPad to display the pictures and use an iPhone or iPod touch to control the picture frame.
