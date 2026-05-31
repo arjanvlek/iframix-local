@@ -309,7 +309,7 @@ may have to proxy this project through your Web Server (search for 'apache rever
 
 ### Testing
 
-- [Running tests](docs/testing.md): test suite setup, what is covered.
+- [Running tests](docs/testing.md): test suite setup, what is covered, and the CI pipeline (GitHub Actions).
 
 ## Usage of Generative AI within this project
 

@@ -50,3 +50,16 @@ pytest tests/api/test_auth.py::TestLogin -v
 - **Router**: charger `set_config`/`set_info` handling, `get_config` responses, charging history persistence, and auto-pairing.
 
 Weather forecast and city search endpoints are not tested because they proxy to an external server.
+
+## Continuous Integration
+
+The full suite runs on every push to `main` and on every pull request via **GitHub Actions**. The workflow lives at [`.github/workflows/test.yml`](../.github/workflows/test.yml).
+
+What the pipeline does:
+
+1. Runs on the standard `ubuntu-latest` hosted runner, using the canonical `actions/checkout@v4` and `actions/setup-python@v5` actions.
+2. Installs Python 3.13 via `setup-python`, with its built-in `cache: pip` (keyed by the hashes of `requirements.txt` + `requirements-test.txt`) so unchanged dependencies are not re-downloaded between runs.
+3. Installs the Python dependencies from both requirements files.
+4. Runs `pytest -v`.
+
+No broker is installed or started by the workflow. GitHub's hosted runners ship with a Docker daemon, so the `mosquitto` fixture in `tests/conftest.py` starts the broker through Testcontainers exactly as it does locally.

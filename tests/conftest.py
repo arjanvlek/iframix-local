@@ -55,11 +55,29 @@ def _wait_for_port(host, port, timeout=30):
 
 @pytest.fixture(scope="session")
 def mosquitto():
-    """Start a Mosquitto MQTT broker in Docker via Testcontainers.
+    """Provide a Mosquitto MQTT broker (TCP + WebSocket) for the test suite.
 
-    Session-scoped: one broker is shared across all tests for speed.
-    The broker allows anonymous connections so any client can connect.
+    Session-scoped: one broker is shared across all tests for speed. The
+    broker allows anonymous connections so any client can connect.
+
+    Two modes:
+
+    * **External broker** — if ``IFRAMIX_TEST_MQTT_HOST`` is set, connect to an
+      already-running broker at that host (ports from ``IFRAMIX_TEST_MQTT_PORT``
+      / ``IFRAMIX_TEST_MQTT_WS_PORT``, defaulting to 1883 / 9001). This can be used
+      to run the tests on an environment where Docker is not available.
+    * **Testcontainers** — otherwise (the default for local development) start
+      ``eclipse-mosquitto:2`` in Docker via Testcontainers.
     """
+    ext_host = os.environ.get("IFRAMIX_TEST_MQTT_HOST")
+    if ext_host:
+        host = ext_host
+        mqtt_port = int(os.environ.get("IFRAMIX_TEST_MQTT_PORT", "1883"))
+        ws_port = int(os.environ.get("IFRAMIX_TEST_MQTT_WS_PORT", "9001"))
+        _wait_for_port(host, mqtt_port)
+        yield {"host": host, "mqtt_port": mqtt_port, "ws_port": ws_port}
+        return
+
     container = (
         DockerContainer("eclipse-mosquitto:2")
         .with_exposed_ports(1883, 9001)

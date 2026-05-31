@@ -1,0 +1,41 @@
+# GitHub Actions CI
+#
+# Runs the full pytest suite on every push to main and on pull requests.
+#
+# The suite needs a Mosquitto broker reachable over both plain MQTT (1883) and
+# MQTT-over-WebSocket (9001 — the router connects with transport="websockets").
+# The `mosquitto` fixture in tests/conftest.py starts that broker through
+# Testcontainers, which needs a Docker daemon. GitHub's hosted ubuntu runners
+# ship with Docker, so Testcontainers works out of the box — no broker needs to
+# be installed or started in the workflow.
+
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-test.txt
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-test.txt
+
+      - name: Run tests
+        run: pytest -v
