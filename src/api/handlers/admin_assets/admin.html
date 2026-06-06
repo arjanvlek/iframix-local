@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,64 +7,138 @@
 <style>__ADMIN_CSS__</style>
 </head>
 <body>
-    <div class="header">
-        <h1>iFramix Admin</h1>
-        <span class="refresh">Charger table refreshes in the background every 10s</span>
-    </div>
-    <h2>Chargers</h2>
-    <table>
-        <thead>
-            <tr>
-                <th>MAC</th>
-                <th>WiFi</th>
-                <th>Firmware</th>
-                <th>Voltage</th>
-                <th>Current</th>
-                <th>Battery</th>
-                <th title="Desired state — last charge command sent by the controller app">Charge command</th>
-                <th title="Actual state — last charging_switch the charger itself reported over MQTT">Charger status</th>
-                <th title="Auto: every refersh-battery call is forwarded to the charger. Manual: only the Enable/Disable buttons drive the charger.">Mode</th>
-                <th>Last Seen</th>
-                <th>Actions</th>
-            </tr>
-        </thead>
-        <tbody id="chargers-tbody">
-            __ADMIN_ROWS__
-        </tbody>
-    </table>
-    <div id="status" class="status"></div>
+<div class="app">
+    <div class="scrim" id="drawer-scrim" hidden></div>
 
-    <h2>Display Devices</h2>
-    <div class="cards-grid">
-        __ADMIN_CARDS__
-    </div>
-
-    <div id="template-modal" class="modal-backdrop" role="dialog"
-         aria-modal="true" aria-label="AI photo template">
-        <div class="modal">
-            <div class="modal-head">
-                <h3>AI photo template</h3>
-                <button type="button" class="close" aria-label="Close">
-                    &times;
-                </button>
-            </div>
-            <div class="modal-body">
-                <div class="modal-preview"></div>
-                <div class="modal-meta"></div>
-                <div class="template-grid"></div>
-                <div class="template-hint"></div>
-            </div>
-            <div class="modal-foot">
-                <div class="status"></div>
-                <button type="button" class="btn neutral cancel-btn">
-                    Cancel
-                </button>
-                <button type="button" class="btn primary save-template-btn">
-                    Save
-                </button>
+    <!-- ---------------- Sidebar (master) ---------------- -->
+    <aside class="sidebar" id="sidebar">
+        <div class="brand">
+            <div class="brand-mark">iF</div>
+            <div>
+                <div class="brand-name">iFramix</div>
+                <div class="brand-sub">Admin console</div>
             </div>
         </div>
+
+        <div class="nav-group">
+            <button class="nav-item active" type="button" data-view="chargers">
+                <span class="nav-ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/></svg></span>
+                Chargers
+                <span class="nav-count" id="charger-count">__CHARGER_COUNT__</span>
+            </button>
+        </div>
+
+        <div class="nav-group grow">
+            <div class="nav-label">
+                Display devices
+                <span class="online-count"><span class="dot online"></span>__ONLINE_COUNT__</span>
+            </div>
+            <div class="device-search">
+                <span class="search-ico"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg></span>
+                <input class="input" id="device-search" placeholder="Search devices" autocomplete="off">
+            </div>
+            <div class="device-list" id="device-list">
+                __ADMIN_NAV__
+                <div class="no-match" hidden>No devices match.</div>
+            </div>
+        </div>
+
+        <div class="sidebar-foot" id="sidebar-foot">
+            <span class="dot online"></span>
+            <span class="foot-text">Telemetry auto-refreshes every 10s</span>
+        </div>
+    </aside>
+
+    <!-- ---------------- Main (detail) ---------------- -->
+    <div class="main">
+        <header class="topbar">
+            <button class="icon-btn mobile-only" id="drawer-open" type="button" aria-label="Open menu"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+            <h1 id="topbar-title">Chargers</h1>
+            <button class="refresh-pill" id="live-toggle" type="button"
+                    title="Click to pause the 10s background refresh">
+                <span class="pulse"></span>
+                <span class="rtext">Live &middot; 10s</span>
+            </button>
+        </header>
+
+        <div class="scroll">
+            <div class="view active" id="view-chargers">
+                <div class="page wide fade-in">
+                    <div class="section-head">
+                        <h2>Chargers</h2>
+                        <span class="sub" id="chargers-sub"></span>
+                    </div>
+                    <div class="card">
+                        <div class="tbl-wrap">
+                            <table class="chargers">
+                                <thead>
+                                    <tr>
+                                        <th>MAC address</th>
+                                        <th>Wi-Fi</th>
+                                        <th>Firmware</th>
+                                        <th>Voltage</th>
+                                        <th>Current</th>
+                                        <th>Battery</th>
+                                        <th title="Desired state — the last charge command sent by the controller app or this panel">Charge cmd</th>
+                                        <th title="Actual state — the last charging_switch the charger itself reported over MQTT">Status</th>
+                                        <th title="Auto: every refersh-battery call from the app is forwarded to the charger. Manual: only the Power on/off button drives the charger.">Mode</th>
+                                        <th>Last seen</th>
+                                        <th class="th-right">Power output</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="chargers-tbody">
+                                    __ADMIN_ROWS__
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <p class="table-foot"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg> Charger binding is managed from the iFramix app over Bluetooth. The Power button toggles output for manual-mode chargers; auto-mode chargers are driven by the controller app.</p>
+                </div>
+            </div>
+
+            __ADMIN_DEVICE_VIEWS__
+        </div>
     </div>
+</div>
+
+<!-- lightbox for normal photos -->
+<div class="lightbox" id="lightbox">
+    <button class="lb-close" type="button" aria-label="Close"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    <img alt="">
+</div>
+
+<!-- AI display template picker -->
+<div id="template-modal" class="modal-scrim" role="dialog" aria-modal="true" aria-label="AI display template">
+    <div class="modal ai-modal">
+        <header class="modal-head">
+            <div>
+                <h3>AI display template</h3>
+                <p class="modal-sub">Choose how this photo is framed on the display</p>
+            </div>
+            <button class="modal-x close" type="button" aria-label="Close"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        </header>
+        <div class="ai-modal-body">
+            <div class="tpl-preview">
+                <div class="display-frame modal-preview"></div>
+                <div class="tpl-fname">
+                    <span class="ph-badge ai">AI</span>
+                    <span class="mono modal-meta"></span>
+                    <span class="tpl-orient"></span>
+                </div>
+            </div>
+            <div class="tpl-list template-grid" role="radiogroup" aria-label="Template"></div>
+        </div>
+        <footer class="modal-foot">
+            <span class="modal-note"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg><span class="template-hint"></span></span>
+            <div class="actions">
+                <button class="btn cancel-btn" type="button">Cancel</button>
+                <button class="btn primary save-template-btn" type="button">Apply template</button>
+            </div>
+        </footer>
+    </div>
+</div>
+
+<div class="toast-wrap" id="toast-wrap"></div>
 
 <script>__ADMIN_JS__</script>
 </body>

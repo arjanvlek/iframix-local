@@ -49,6 +49,8 @@ def session_to_device_record(session, devices):
     created_at = session.get("created_at",
                              time.strftime("%Y-%m-%d %H:%M:%S"))
     bind_at = session.get("bind_at", now)
+    last_active = max(session.get("last_login", 0) or 0,
+                      session.get("last_active", 0) or 0)
     return {
         "id": session["id"],
         "uuid": session["uuid"],
@@ -63,7 +65,7 @@ def session_to_device_record(session, devices):
         "bind_at": bind_at,
         "created_at": created_at,
         "deleted_at": None,
-        "is_online": 1 if (now - session.get("last_login", 0)) < 300 else 0,
+        "is_online": 1 if (now - last_active) < 300 else 0,
         "online": {
             "start_connected_at": session.get("last_login", bind_at),
             "last_disconnected_at": 0,
@@ -157,6 +159,8 @@ def session_to_index_record(session, devices, bindings):
                 icharger = {"id": charger_id, "mac": mac}
                 break
 
+    last_active = max(session.get("last_login", 0) or 0,
+                      session.get("last_active", 0) or 0)
     return {
         "id": session["id"],
         "uuid": session["uuid"],
@@ -171,7 +175,7 @@ def session_to_index_record(session, devices, bindings):
         "bind_at": bind_at,
         "created_at": created_at,
         "deleted_at": None,
-        "is_online": 1 if (now - session.get("last_login", 0)) < 300 else 0,
+        "is_online": 1 if (now - last_active) < 300 else 0,
         "online": {
             "start_connected_at": session.get("last_login", bind_at),
             "last_disconnected_at": session.get("last_disconnected_at", 0),

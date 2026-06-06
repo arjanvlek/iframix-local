@@ -11,7 +11,7 @@ import ssl
 import threading
 from urllib.parse import urlparse, parse_qs
 
-from src.api import config
+from src.api import activity, config
 from src.db import init_db
 from src.logging_setup import configure_access_log, configure_logging
 from src.api.persistence import (
@@ -119,6 +119,20 @@ class APIHandler(
         self.end_headers()
         self.wfile.write(content)
 
+    def _track_device_activity(self):
+        """Attribute this request to its device for presence tracking.
+
+        Native apps send their identity in the XX-Device-Uuid header on every
+        request. Best-effort and fully defensive — never break request
+        handling over activity tracking.
+        """
+        try:
+            device_uuid = self.headers.get("XX-Device-Uuid")
+            if device_uuid:
+                activity.record_activity(device_uuid)
+        except Exception:  # noqa: BLE001
+            pass
+
     def read_body(self):
         length = int(self.headers.get("Content-Length", 0))
         raw = self.rfile.read(length) if length else b""
@@ -130,6 +144,7 @@ class APIHandler(
     # --- POST routing ---
 
     def do_POST(self):
+        self._track_device_activity()
         path = urlparse(self.path).path
 
         # Asset upload uses multipart/form-data — read_body() would consume
@@ -224,6 +239,7 @@ class APIHandler(
     # --- GET routing ---
 
     def do_GET(self):
+        self._track_device_activity()
         parsed = urlparse(self.path)
         path = parsed.path
         params = parse_qs(parsed.query)
@@ -249,12 +265,20 @@ class APIHandler(
             self.handle_admin_chargers()
             return
 
+        if path == "/admin/devices":
+            self.handle_admin_device_status()
+            return
+
         if path == "/admin/photos":
             self.handle_admin_photos(params)
             return
 
         if path.startswith("/admin/thumb/"):
             self.handle_admin_thumb(path)
+            return
+
+        if path.startswith("/admin/assets/"):
+            self.handle_admin_asset(path)
             return
 
         # API endpoints

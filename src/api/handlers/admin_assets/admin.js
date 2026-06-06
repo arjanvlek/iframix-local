@@ -1,75 +1,17 @@
-// Background refresh of the chargers table.  Replaces the previous
-// full-page reload so any open settings card keeps its state.
-async function refreshChargers() {
-    try {
-        const r = await fetch("/admin/chargers");
-        const rowsHtml = await r.text();
-        const tbody = document.getElementById("chargers-tbody");
-        if (tbody) tbody.innerHTML = rowsHtml;
-    } catch {}
-}
+// iFramix Admin — master-detail UI (Claude Design handoff implementation).
+//
+// The page is server-rendered (sidebar rows, charger table rows and one
+// hidden .view per display device); this script wires navigation, the
+// 10s charger refresh, and the per-device settings forms to the same
+// REST endpoints the native controller app uses.
 
-// Charger toggle (existing behavior)
-async function toggle(uuid, on) {
-    const statusEl = document.getElementById("status");
-    statusEl.textContent = `${on ? "Enabling" : "Disabling"} charging...`;
-    statusEl.className = "status";
-    try {
-        const r = await fetch("/admin/toggle", {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({uuid, charging_on: on}),
-        });
-        const data = await r.json();
-        if (data.code === 1) {
-            statusEl.textContent =
-                `Command sent: charging ${on ? "enabled" : "disabled"}`;
-            statusEl.className = "status ok";
-            refreshChargers();
-        } else {
-            statusEl.textContent = `Error: ${data.msg || "unknown"}`;
-            statusEl.className = "status error";
-        }
-    } catch (err) {
-        statusEl.textContent = `Request failed: ${err}`;
-        statusEl.className = "status error";
-    }
-}
+"use strict";
 
-// Charger mode switch (auto <-> manual)
-async function setMode(uuid, mode) {
-    const statusEl = document.getElementById("status");
-    statusEl.textContent = `Switching charger to ${mode} mode...`;
-    statusEl.className = "status";
-    try {
-        const r = await fetch("/admin/set-mode", {
-            method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({uuid, mode}),
-        });
-        const data = await r.json();
-        if (data.code === 1) {
-            statusEl.textContent = `Charger switched to ${mode} mode`;
-            statusEl.className = "status ok";
-            refreshChargers();
-        } else {
-            statusEl.textContent = `Error: ${data.msg || "unknown"}`;
-            statusEl.className = "status error";
-        }
-    } catch (err) {
-        statusEl.textContent = `Request failed: ${err}`;
-        statusEl.className = "status error";
-    }
-}
+/* ===================== tiny helpers ===================== */
 
-// --- Display-device settings ---
-
-function setStatus(card, form, msg, cls) {
-    const el = card.querySelector(`.subform[data-form="${form}"] .status`);
-    if (el) {
-        el.textContent = msg;
-        el.className = `status ${cls || ""}`;
-    }
+function $(sel, root) { return (root || document).querySelector(sel); }
+function $all(sel, root) {
+    return Array.from((root || document).querySelectorAll(sel));
 }
 
 async function postJSON(url, body) {
@@ -86,216 +28,811 @@ async function getJSON(url) {
     return r.json();
 }
 
-// Flip clock (screensaver)
-async function loadClock(card) {
-    const deviceId = card.dataset.deviceId;
+/* ---- inline icons (subset of the design icon set) ---- */
+function icon(name, size) {
+    const paths = {
+        check: '<polyline points="20 6 9 17 4 12"/>',
+        trash: '<path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>',
+        x: '<path d="M18 6 6 18M6 6l12 12"/>',
+        image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>',
+        cloud: '<path d="M17.5 19a4.5 4.5 0 0 0 .5-9 6 6 0 0 0-11.6-1.5A4 4 0 0 0 6 19h11.5Z"/>',
+        calendar: '<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 2v4M16 2v4"/>',
+        monitor: '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>',
+        smartphone: '<rect x="6.5" y="2" width="11" height="20" rx="2.5"/><path d="M11 18h2"/>',
+        alert: '<path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/>',
+    };
+    const s = size || 16;
+    return '<svg width="' + s + '" height="' + s + '" viewBox="0 0 24 24" ' +
+        'fill="none" stroke="currentColor" stroke-width="2" ' +
+        'stroke-linecap="round" stroke-linejoin="round">' +
+        (paths[name] || "") + "</svg>";
+}
+
+/* ---- toast ---- */
+function toast(msg, isError) {
+    const wrap = document.getElementById("toast-wrap");
+    if (!wrap) return;
+    const t = document.createElement("div");
+    t.className = "toast" + (isError ? " error" : "");
+    t.innerHTML = '<span class="ti">' +
+        icon(isError ? "alert" : "check") + "</span>";
+    const span = document.createElement("span");
+    span.textContent = msg;
+    t.appendChild(span);
+    wrap.appendChild(t);
+    setTimeout(() => t.remove(), 2400);
+}
+
+/* ---- segmented controls / style grids ---- */
+function wireSeg(seg, onChange) {
+    if (!seg) return;
+    $all("button", seg).forEach((btn) => {
+        btn.addEventListener("click", () => {
+            $all("button", seg).forEach(
+                (b) => b.setAttribute("aria-pressed", "false"));
+            btn.setAttribute("aria-pressed", "true");
+            if (onChange) onChange(btn.dataset.value);
+        });
+    });
+}
+function setSegValue(seg, value) {
+    if (!seg) return;
+    $all("button", seg).forEach((b) => b.setAttribute(
+        "aria-pressed", b.dataset.value === String(value) ? "true" : "false"));
+}
+function segValue(seg) {
+    const b = seg && $('button[aria-pressed="true"]', seg);
+    return b ? b.dataset.value : null;
+}
+
+function wireStyleGrid(grid) {
+    if (!grid) return;
+    $all(".style-tile", grid).forEach((tile) => {
+        tile.addEventListener("click", () => {
+            $all(".style-tile", grid).forEach(
+                (t) => t.setAttribute("aria-pressed", "false"));
+            tile.setAttribute("aria-pressed", "true");
+        });
+    });
+}
+function setStyleGridValue(grid, value) {
+    if (!grid) return;
+    $all(".style-tile", grid).forEach((t) => t.setAttribute(
+        "aria-pressed", t.dataset.value === String(value) ? "true" : "false"));
+}
+function styleGridValue(grid) {
+    const t = grid && $('.style-tile[aria-pressed="true"]', grid);
+    return t ? parseInt(t.dataset.value, 10) : null;
+}
+
+/* ===================== view switching ===================== */
+
+function showView(key) {
+    let target = document.getElementById("view-" + key);
+    if (!target) { key = "chargers"; target = $("#view-chargers"); }
+
+    $all(".view").forEach((v) => v.classList.toggle("active", v === target));
+    $all(".nav-item, .device-row").forEach((b) =>
+        b.classList.toggle("active", b.dataset.view === key));
+
+    const title = document.getElementById("topbar-title");
+    if (key === "chargers") {
+        title.textContent = "Chargers";
+    } else {
+        title.innerHTML = '<span class="crumb">Devices&nbsp;/&nbsp;</span>';
+        title.appendChild(
+            document.createTextNode(target.dataset.name || ""));
+    }
+
+    if (target.classList.contains("device-view") && !target.dataset.loaded) {
+        target.dataset.loaded = "1";
+        initDevice(target);
+    }
+    closeDrawer();
+    history.replaceState(null, "", "#" + key);
+}
+
+/* ---- mobile drawer ---- */
+function openDrawer() {
+    $("#sidebar").classList.add("open");
+    $("#drawer-scrim").hidden = false;
+}
+function closeDrawer() {
+    $("#sidebar").classList.remove("open");
+    $("#drawer-scrim").hidden = true;
+}
+
+/* ---- sidebar search ---- */
+function filterDevices(query) {
+    const q = query.trim().toLowerCase();
+    let any = false;
+    $all("#device-list .device-row").forEach((row) => {
+        const hit = !q ||
+            (row.dataset.search || "").indexOf(q) !== -1;
+        row.hidden = !hit;
+        if (hit) any = true;
+    });
+    const noMatch = $("#device-list .no-match");
+    if (noMatch) noMatch.hidden = any || !$("#device-list .device-row");
+}
+
+/* ===================== chargers ===================== */
+
+async function refreshChargers() {
+    try {
+        const r = await fetch("/admin/chargers");
+        const rowsHtml = await r.text();
+        const tbody = document.getElementById("chargers-tbody");
+        if (!tbody) { return; }
+
+        // Change-only flash: snapshot the currently displayed voltage /
+        // current per charger before swapping the tbody, then re-apply the
+        // .flash animation class only to cells whose value actually changed.
+        // (The server no longer bakes in .flash, so steady values stay
+        // calm and new rows / the initial render never flash.)
+        const prev = {};
+        $all("tr[data-uuid]", tbody).forEach((tr) => {
+            const v = $(".cell-voltage", tr);
+            const c = $(".cell-current", tr);
+            prev[tr.dataset.uuid] = {
+                voltage: v ? v.textContent.trim() : null,
+                current: c ? c.textContent.trim() : null,
+            };
+        });
+
+        tbody.innerHTML = rowsHtml;
+
+        $all("tr[data-uuid]", tbody).forEach((tr) => {
+            const old = prev[tr.dataset.uuid];
+            if (!old) { return; }
+            const v = $(".cell-voltage", tr);
+            const c = $(".cell-current", tr);
+            if (v && old.voltage !== null &&
+                    v.textContent.trim() !== old.voltage) {
+                v.classList.add("flash");
+            }
+            if (c && old.current !== null &&
+                    c.textContent.trim() !== old.current) {
+                c.classList.add("flash");
+            }
+        });
+
+        updateChargersSub();
+    } catch {}
+}
+
+function updateChargersSub() {
+    const rows = $all("#chargers-tbody tr[data-uuid]");
+    const charging = rows.filter(
+        (r) => r.dataset.status === "on").length;
+    const sub = document.getElementById("chargers-sub");
+    if (sub) {
+        sub.textContent = rows.length + " connected · " +
+            charging + " charging";
+    }
+    const count = document.getElementById("charger-count");
+    if (count) count.textContent = rows.length;
+}
+
+/* ---- live refresh toggle ---- */
+// Clicking the topbar "Live · 10s" pill pauses/resumes the 10s
+// background refresh (chargers table + device presence). Paused state:
+// the pulsing green dot disappears and every "live" label flips to a
+// paused wording (pill, sidebar foot).
+let liveRefresh = true;
+
+function setLiveRefresh(on) {
+    liveRefresh = on;
+    const pill = document.getElementById("live-toggle");
+    if (pill) {
+        pill.classList.toggle("paused", !on);
+        pill.title = on
+            ? "Click to pause the 10s background refresh"
+            : "Click to resume the 10s background refresh";
+        const label = $(".rtext", pill);
+        if (label) label.textContent = on ? "Live · 10s" : "Paused";
+    }
+    const foot = document.getElementById("sidebar-foot");
+    if (foot) {
+        const dot = $(".dot", foot);
+        if (dot) dot.className = "dot " + (on ? "online" : "offline");
+        const text = $(".foot-text", foot);
+        if (text) {
+            text.textContent = on
+                ? "Telemetry auto-refreshes every 10s"
+                : "Auto-refresh paused";
+        }
+    }
+    if (on) {
+        // catch up immediately rather than waiting for the next tick
+        refreshChargers();
+        refreshDeviceStatus();
+    }
+}
+
+// Background refresh of the display-device presence indicators: the
+// sidebar online dots, the "N/M" online counter, and each detail
+// view's Online/Offline chip + "seen ..." tag. Polled on the same 10s
+// cadence as the chargers table; only existing DOM nodes are updated
+// (a newly logged-in device still requires a page reload to appear).
+async function refreshDeviceStatus() {
+    try {
+        const resp = await getJSON("/admin/devices");
+        const d = (resp && resp.data) || {};
+        const counter = $(".nav-label .online-count");
+        if (counter) {
+            counter.innerHTML = '<span class="dot online"></span>' +
+                (d.online || 0) + "/" + (d.total || 0);
+        }
+        (d.devices || []).forEach((dev) => {
+            const cls = dev.online ? "online" : "offline";
+            const label = dev.online ? "Online" : "Offline";
+
+            const row = $('.device-row[data-view="device-' + dev.id +
+                '"] .dot');
+            if (row) {
+                row.className = "dot " + cls;
+                row.title = label;
+            }
+
+            const view = document.getElementById("view-device-" + dev.id);
+            if (!view) return;
+            const chip = $(".presence-chip", view);
+            if (chip) {
+                chip.className = "chip presence-chip " + cls;
+                chip.innerHTML = '<span class="dot ' + cls + '"></span>' +
+                    label;
+            }
+            const seen = $(".seen-tag", view);
+            if (seen) seen.textContent = "seen " + dev.seen;
+        });
+    } catch {}
+}
+
+// Called from the server-rendered Power on/off buttons.
+async function toggle(uuid, on) {
+    try {
+        const data = await postJSON("/admin/toggle",
+            {uuid, charging_on: on});
+        if (data.code === 1) {
+            toast("Power output turned " + (on ? "on" : "off"));
+            refreshChargers();
+        } else {
+            toast("Error: " + (data.msg || "unknown"), true);
+        }
+    } catch (err) {
+        toast("Request failed: " + err, true);
+    }
+}
+
+// Called from the server-rendered Auto/Manual segmented control.
+async function setMode(uuid, mode) {
+    try {
+        const data = await postJSON("/admin/set-mode", {uuid, mode});
+        if (data.code === 1) {
+            toast("Mode set to " + (mode === "auto" ? "Auto" : "Manual"));
+            refreshChargers();
+        } else {
+            toast("Error: " + (data.msg || "unknown"), true);
+        }
+    } catch (err) {
+        toast("Request failed: " + err, true);
+    }
+}
+
+/* ===================== per-device state ===================== */
+
+const PHOTO_PAGE_SIZE = 24;
+const deviceState = {};
+
+function getState(deviceId) {
+    if (!deviceState[deviceId]) {
+        deviceState[deviceId] = {
+            kind: "normal",
+            filter: "all",
+            sort: "default",
+            selected: new Set(),
+            photos: {
+                normal: {items: [], total: 0, page: 0},
+                ai: {items: [], total: 0, page: 0},
+            },
+            weather: {cityId: "", cityName: "", lat: "", lon: ""},
+        };
+    }
+    return deviceState[deviceId];
+}
+
+function initDevice(view) {
+    loadPhotos(view);
+    loadClock(view);
+    loadWeather(view);
+    loadCalendars(view);
+}
+
+/* ===================== photos ===================== */
+
+function loadPhotos(view) {
+    const state = getState(view.dataset.deviceId);
+    state.selected.clear();
+    ["normal", "ai"].forEach((type) => {
+        state.photos[type] = {items: [], total: 0, page: 0};
+        loadPhotoPage(view, type, 1);
+    });
+}
+
+async function loadPhotoPage(view, type, page) {
+    const deviceId = view.dataset.deviceId;
+    const state = getState(deviceId);
     try {
         const data = await getJSON(
-            `/api/ipad/device/setting/screensaver?id=${deviceId}`);
+            "/admin/photos?device_id=" + deviceId + "&type=" + type +
+            "&page=" + page + "&page_size=" + PHOTO_PAGE_SIZE +
+            "&sort=" + state.sort);
+        const d = (data && data.data) || {};
+        const slot = state.photos[type];
+        if (page === 1) slot.items = [];
+        slot.items = slot.items.concat(d.list || []);
+        slot.total = d.total || 0;
+        slot.page = page;
+        renderGallery(view);
+    } catch {}
+}
+
+function renderGallery(view) {
+    const state = getState(view.dataset.deviceId);
+    const grid = $(".grid-photos", view);
+    if (!grid) return;
+
+    const n = state.photos.normal;
+    const a = state.photos.ai;
+    let shown;
+    if (state.filter === "normal") shown = n.items.map(
+        (m) => ({m, type: "normal"}));
+    else if (state.filter === "ai") shown = a.items.map(
+        (m) => ({m, type: "ai"}));
+    else shown = n.items.map((m) => ({m, type: "normal"}))
+        .concat(a.items.map((m) => ({m, type: "ai"})));
+
+    grid.innerHTML = "";
+    shown.forEach(({m, type}) => grid.appendChild(photoNode(view, m, type)));
+
+    // filter counts
+    const counts = {normal: n.total, ai: a.total, all: n.total + a.total};
+    $all(".fcount", view).forEach((el) => {
+        el.textContent = counts[el.dataset.fcount];
+    });
+    const tabCount = $('.tab[data-tab="photos"] .tcount', view);
+    if (tabCount) tabCount.textContent = counts.all || "";
+
+    // empty state
+    const empty = $(".photos-empty", view);
+    if (empty) {
+        empty.hidden = shown.length > 0;
+        empty.textContent = "No " +
+            (state.filter === "all" ? "" :
+                state.filter === "ai" ? "AI " : "normal ") +
+            "photos yet — drop some above to get started.";
+    }
+
+    renderLoadMore(view);
+    updateDeleteButton(view);
+}
+
+function photoNode(view, m, type) {
+    const state = getState(view.dataset.deviceId);
+    const el = document.createElement("div");
+    el.className = "photo" +
+        (state.selected.has(String(m.id)) ? " selected" : "");
+    el.title = (m.filename || "") +
+        (type === "ai" ? " · click to set display template"
+                       : " · click to preview");
+    el.dataset.mediaId = m.id;
+
+    const img = document.createElement("img");
+    img.loading = "lazy";
+    img.decoding = "async";
+    img.alt = m.filename || "";
+    img.src = m.thumb_url;
+    el.appendChild(img);
+
+    if (type === 'ai') {
+        const badge = document.createElement("span");
+        badge.className = "ph-badge ai";
+        badge.textContent = "AI"
+        el.appendChild(badge);
+    }
+
+    const check = document.createElement("button");
+    check.type = "button";
+    check.className = "ph-check";
+    check.title = "Select for deletion";
+    check.innerHTML = icon("check", 13);
+    check.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const id = String(m.id);
+        if (state.selected.has(id)) state.selected.delete(id);
+        else state.selected.add(id);
+        el.classList.toggle("selected", state.selected.has(id));
+        updateDeleteButton(view);
+    });
+    el.appendChild(check);
+
+    if (type === "ai") {
+        const chip = document.createElement("span");
+        chip.className = "ph-tpl";
+        chip.innerHTML = icon("image", 12);
+        const label = document.createElement("span");
+        label.textContent = templateChipName(
+            view.dataset.aspect, m.template_type || 1, m.template_id || 0);
+        chip.appendChild(label);
+        el.appendChild(chip);
+        el.addEventListener("click", () => openTemplateModal(view, m));
+    } else {
+        el.addEventListener("click", () => openLightbox(m.url));
+    }
+    return el;
+}
+
+function renderLoadMore(view) {
+    const state = getState(view.dataset.deviceId);
+    const more = $(".photo-more", view);
+    if (!more) return;
+    const types = state.filter === "all"
+        ? ["normal", "ai"] : [state.filter];
+    const loaded = types.reduce(
+        (s, t) => s + state.photos[t].items.length, 0);
+    const total = types.reduce((s, t) => s + state.photos[t].total, 0);
+    more.innerHTML = "";
+    if (loaded < total) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "btn sm load-more-btn";
+        btn.textContent =
+            "Load more (" + loaded + " of " + total + ")";
+        btn.addEventListener("click", () => {
+            btn.disabled = true;
+            btn.textContent = "Loading…";
+            types.forEach((t) => {
+                const slot = state.photos[t];
+                if (slot.items.length < slot.total) {
+                    loadPhotoPage(view, t, slot.page + 1);
+                }
+            });
+        });
+        more.appendChild(btn);
+    } else if (total > PHOTO_PAGE_SIZE) {
+        const note = document.createElement("span");
+        note.className = "photo-more-note";
+        note.textContent = "All " + total + " shown";
+        more.appendChild(note);
+    }
+}
+
+function updateDeleteButton(view) {
+    const state = getState(view.dataset.deviceId);
+    const btn = $(".delete-selected", view);
+    if (!btn) return;
+    const nSel = state.selected.size;
+    btn.hidden = nSel === 0;
+    $(".del-count", btn).textContent = nSel;
+}
+
+// Bulk-delete the checked photos via the same delMedia endpoint /
+// `ipad/media/delete` MQTT event the display app uses.
+async function deleteSelectedPhotos(view) {
+    const deviceId = view.dataset.deviceId;
+    const state = getState(deviceId);
+    const ids = Array.from(state.selected);
+    if (!ids.length) return;
+    if (!confirm("Delete " + ids.length +
+            " photo(s)? This cannot be undone.")) {
+        return;
+    }
+    try {
+        const data = await postJSON("/api/ipad/media/delMedia", {
+            id: ids,
+            device_id: parseInt(deviceId, 10),
+        });
+        if (data.code === 1) {
+            toast(ids.length + " photo" +
+                (ids.length > 1 ? "s" : "") + " deleted");
+            // delMedia removes files in a background thread, so give it
+            // a moment before re-reading the (now shorter) list.
+            setTimeout(() => loadPhotos(view), 600);
+        } else {
+            toast("Delete failed: " + (data.msg || "?"), true);
+        }
+    } catch (e) {
+        toast("Delete error: " + e, true);
+    }
+}
+
+/* ---- upload (dropzone) ---- */
+
+async function handleFiles(view, fileList) {
+    const files = Array.from(fileList || []).filter(
+        (f) => /^image\//.test(f.type) || /\.(jpe?g|png|gif|webp|heic)$/i
+            .test(f.name));
+    if (!files.length) return;
+    const deviceId = view.dataset.deviceId;
+    const state = getState(deviceId);
+    const kind = state.kind;
+    const dz = $(".dropzone", view);
+    const title = $(".dz-title", view);
+    const origTitle = title.textContent;
+    dz.classList.add("busy");
+
+    // Upload sequentially (one file at a time) to avoid overwhelming the
+    // server when many photos are selected. Mirrors how the native app
+    // uploads photos one by one.
+    const assetIds = [];
+    try {
+        for (const [idx, file] of files.entries()) {
+            title.textContent = "Uploading " + (idx + 1) + "/" +
+                files.length + "…";
+            const fd = new FormData();
+            fd.append("file", file);
+            fd.append("key", file.name);
+            const suffix =
+                (file.name.split(".").pop() || "jpg").toLowerCase();
+            fd.append("x:suffix", suffix);
+            const r = await fetch("/api/user/asset/upload",
+                {method: "POST", body: fd});
+            const data = await r.json();
+            if (data && data.code === 1 && data.data && data.data.id) {
+                assetIds.push(data.data.id);
+            } else {
+                throw new Error("upload rejected for " + file.name);
+            }
+        }
+        const data = await postJSON("/api/ipad/media/setMedia", {
+            device_id: parseInt(deviceId, 10),
+            asset_ids: assetIds,
+            type: kind,
+        });
+        if (data.code === 1) {
+            toast(assetIds.length +
+                (kind === "ai" ? " AI image" : " photo") +
+                (assetIds.length > 1 ? "s" : "") + " added");
+            loadPhotos(view);
+        } else {
+            toast("setMedia failed: " + (data.msg || "?"), true);
+        }
+    } catch (e) {
+        toast("Upload failed: " + e, true);
+    } finally {
+        dz.classList.remove("busy");
+        title.textContent = origTitle;
+    }
+}
+
+/* ===================== flip clock ===================== */
+
+async function loadClock(view) {
+    const deviceId = view.dataset.deviceId;
+    try {
+        const data = await getJSON(
+            "/api/ipad/device/setting/screensaver?id=" + deviceId);
         const cur = (data && data.data) || {};
         const no = (cur.no != null) ? parseInt(cur.no, 10) : 1;
         const time = (cur.time != null) ? parseInt(cur.time, 10) : 1;
-        const styleRadio = card.querySelector(
-            `.subform[data-form="clock"] input[name="clock-style-${deviceId}"]` +
-            `[value="${no}"]`);
-        if (styleRadio) styleRadio.checked = true;
-        const fmtRadio = card.querySelector(
-            `.subform[data-form="clock"] input[name="clock-${deviceId}"]` +
-            `[value="${time}"]`);
-        if (fmtRadio) fmtRadio.checked = true;
+        setSegValue($('[data-seg="clock-format"]', view), time);
+        setStyleGridValue($('[data-style-grid="clock"]', view), no);
     } catch {}
 }
 
-async function saveClock(card) {
-    const deviceId = card.dataset.deviceId;
-    const styleChecked = card.querySelector(
-        `.subform[data-form="clock"] input[name="clock-style-${deviceId}"]:checked`);
-    const formatChecked = card.querySelector(
-        `.subform[data-form="clock"] input[name="clock-${deviceId}"]:checked`);
-    if (!styleChecked) {
-        setStatus(card, "clock", "Pick a flip-clock style (1-5)", "error");
-        return;
-    }
-    if (!formatChecked) {
-        setStatus(card, "clock", "Select 12h or 24h", "error");
-        return;
-    }
-    setStatus(card, "clock", "Saving...", "");
+async function saveClock(view) {
+    const deviceId = view.dataset.deviceId;
+    const time = segValue($('[data-seg="clock-format"]', view));
+    const no = styleGridValue($('[data-style-grid="clock"]', view));
+    if (!time) { toast("Select 12-hour or 24-hour first", true); return; }
+    if (!no) { toast("Pick a clock style first", true); return; }
     try {
         const data = await postJSON("/api/ipad/device/setting/screensaver", {
             id: parseInt(deviceId, 10),
-            values: {
-                no: parseInt(styleChecked.value, 10),
-                time: parseInt(formatChecked.value, 10),
-            },
+            values: {no, time: parseInt(time, 10)},
         });
-        if (data.code === 1) setStatus(card, "clock", "Saved", "ok");
-        else setStatus(card, "clock", `Failed: ${data.msg || "?"}`, "error");
+        if (data.code === 1) toast("Clock settings saved");
+        else toast("Failed: " + (data.msg || "?"), true);
     } catch (e) {
-        setStatus(card, "clock", `Error: ${e}`, "error");
+        toast("Error: " + e, true);
     }
 }
 
-// Weather
-async function loadWeather(card) {
-    const deviceId = card.dataset.deviceId;
+/* ===================== weather ===================== */
+
+async function loadWeather(view) {
+    const deviceId = view.dataset.deviceId;
+    const state = getState(deviceId);
     try {
         const data = await getJSON(
-            `/api/ipad/device/setting/weather?id=${deviceId}`);
+            "/api/ipad/device/setting/weather?id=" + deviceId);
         const cur = (data && data.data) || {};
-        const sub = card.querySelector('.subform[data-form="weather"]');
-        if (!sub) return;
         if (cur.city) {
-            sub.querySelector(".current-city").textContent =
-                `Current: ${cur.city}`;
             const cm = cur.cityMsg || {};
-            card.dataset.cityId = cm.id || "";
-            card.dataset.cityName = cur.city;
-            card.dataset.cityLat = cm.lat || "";
-            card.dataset.cityLon = cm.lon || "";
+            state.weather = {
+                cityId: cm.id || "",
+                cityName: cur.city,
+                lat: cm.lat || "",
+                lon: cm.lon || "",
+            };
+            setCurrentCity(view, "Current: ", cur.city);
         }
-        const unit = cur.unit || 1;
-        const unitRadio = sub.querySelector(
-            `input[type="radio"][name="unit-${card.dataset.deviceId}"]` +
-            `[value="${unit}"]`);
-        if (unitRadio) unitRadio.checked = true;
+        setSegValue($('[data-seg="unit"]', view), cur.unit || 1);
         // weather_template_id is 0-based (0..3) to match the iFramix
-        // 2.2.29 webapp catalog. Use ?? so a saved 0 stays 0 instead of
-        // falling back to "no row" semantics.
+        // 2.2.29 webapp catalog. A saved 0 must stay 0.
         const styleId = (cur.weather_template_id != null)
             ? cur.weather_template_id : 0;
-        const styleRadio = sub.querySelector(
-            `input[type="radio"][name="weather-style-${card.dataset.deviceId}"]` +
-            `[value="${styleId}"]`);
-        if (styleRadio) styleRadio.checked = true;
+        setStyleGridValue($('[data-style-grid="weather"]', view), styleId);
     } catch {}
 }
 
-async function searchCity(card) {
-    const sub = card.querySelector('.subform[data-form="weather"]');
-    const kw = sub.querySelector("input.city-query").value.trim();
+function setCurrentCity(view, prefix, city) {
+    const el = $(".current-city", view);
+    if (!el) return;
+    el.innerHTML = '<span class="cc-ico">' + icon("cloud", 15) + "</span>";
+    el.appendChild(document.createTextNode(prefix));
+    const b = document.createElement("b");
+    b.textContent = city;
+    el.appendChild(b);
+}
+
+async function searchCity(view) {
+    const kw = $(".city-query", view).value.trim();
     if (!kw) return;
-    setStatus(card, "weather", "Searching...", "");
+    const list = $(".city-results", view);
     try {
         const data = await getJSON(
-            `/api/ipad/address/city?keyword=${encodeURIComponent(kw)}&lang=en`);
-        const list = sub.querySelector(".city-results");
+            "/api/ipad/address/city?keyword=" +
+            encodeURIComponent(kw) + "&lang=en");
         list.innerHTML = "";
         const results = Array.isArray(data.data) ? data.data : [];
         if (!results.length) {
-            setStatus(card, "weather", "No results", "error");
+            toast("No cities found for “" + kw + "”", true);
             return;
         }
+        const state = getState(view.dataset.deviceId);
         for (const city of results) {
-            const opt = document.createElement("div");
+            const opt = document.createElement("button");
+            opt.type = "button";
             opt.className = "city-opt";
             const parts = [city.name];
             if (city.adm1 && city.adm1 !== city.name) parts.push(city.adm1);
             if (city.country) parts.push(city.country);
-            opt.textContent = parts.filter(Boolean).join(", ");
+            const label = parts.filter(Boolean).join(", ");
+            opt.innerHTML = icon("cloud", 14);
+            opt.appendChild(document.createTextNode(" " + label));
             opt.addEventListener("click", () => {
-                card.dataset.cityId = city.city_id || city.id || "";
-                card.dataset.cityName = city.name || "";
-                card.dataset.cityLat = city.lat || "";
-                card.dataset.cityLon = city.lon || "";
-                sub.querySelector(".current-city").textContent =
-                    `Selected: ${opt.textContent}`;
+                state.weather = {
+                    cityId: city.city_id || city.id || "",
+                    cityName: city.name || "",
+                    lat: city.lat || "",
+                    lon: city.lon || "",
+                };
+                setCurrentCity(view, "Selected: ", label);
                 list.innerHTML = "";
             });
             list.appendChild(opt);
         }
-        setStatus(card, "weather", `${results.length} result(s)`, "ok");
     } catch (e) {
-        setStatus(card, "weather", `Search error: ${e}`, "error");
+        toast("Search error: " + e, true);
     }
 }
 
-async function saveWeather(card) {
-    const deviceId = card.dataset.deviceId;
-    const sub = card.querySelector('.subform[data-form="weather"]');
-    const cityId = card.dataset.cityId || "";
-    const cityName = card.dataset.cityName || "";
-    if (!cityId) {
-        setStatus(card, "weather",
-            "Search and select a city first", "error");
+async function saveWeather(view) {
+    const deviceId = view.dataset.deviceId;
+    const state = getState(deviceId);
+    if (!state.weather.cityId) {
+        toast("Search and select a city first", true);
         return;
     }
-    const unitChecked = sub.querySelector(
-        `input[type="radio"][name="unit-${deviceId}"]:checked`);
-    const unit = unitChecked ? parseInt(unitChecked.value, 10) : 1;
-    const styleChecked = sub.querySelector(
-        `input[type="radio"][name="weather-style-${deviceId}"]:checked`);
-    const weatherTemplateId = styleChecked
-        ? parseInt(styleChecked.value, 10) : 0;
-    setStatus(card, "weather", "Saving...", "");
+    const unit = parseInt(segValue($('[data-seg="unit"]', view)) || "1", 10);
+    const styleId = styleGridValue($('[data-style-grid="weather"]', view));
     try {
         const data = await postJSON("/api/ipad/device/setting/weather", {
             id: parseInt(deviceId, 10),
             values: {
-                city: cityName,
+                city: state.weather.cityName,
                 cityMsg: {
-                    id: cityId,
-                    name: cityName,
-                    lat: card.dataset.cityLat || "",
-                    lon: card.dataset.cityLon || "",
+                    id: state.weather.cityId,
+                    name: state.weather.cityName,
+                    lat: state.weather.lat,
+                    lon: state.weather.lon,
                 },
                 unit,
-                weather_template_id: weatherTemplateId,
+                weather_template_id: styleId == null ? 0 : styleId,
             },
         });
-        if (data.code === 1) setStatus(card, "weather", "Saved", "ok");
-        else setStatus(card, "weather", `Failed: ${data.msg || "?"}`, "error");
+        if (data.code === 1) toast("Weather settings saved");
+        else toast("Failed: " + (data.msg || "?"), true);
     } catch (e) {
-        setStatus(card, "weather", `Error: ${e}`, "error");
+        toast("Error: " + e, true);
     }
 }
 
-// Calendar
-async function loadCalendars(card) {
-    const deviceId = card.dataset.deviceId;
+/* ===================== calendars ===================== */
+
+const CAL_PROVIDERS = {
+    google: {name: "Google Calendar", hue: 256},
+    icloud: {name: "Apple iCloud", hue: 220},
+    outlook: {name: "Outlook / Microsoft 365", hue: 240},
+    manual: {name: "Other (ICS URL)", hue: 290},
+};
+
+async function loadCalendars(view) {
+    const deviceId = view.dataset.deviceId;
+    const list = $(".cal-list", view);
+    if (!list) return;
     try {
         const data = await getJSON(
-            `/api/calendar/index?device_id=${deviceId}`);
-        const list = card.querySelector(
-            '.subform[data-form="calendar"] .cal-list');
-        if (!list) return;
-        list.innerHTML = "";
+            "/api/calendar/index?device_id=" + deviceId);
         const items = (data && data.data && data.data.list) || [];
+        list.innerHTML = "";
+        const tabCount = $('.tab[data-tab="calendars"] .tcount', view);
+        if (tabCount) tabCount.textContent = items.length || "";
         if (!items.length) {
-            const empty = document.createElement("li");
+            const empty = document.createElement("div");
             empty.className = "empty";
-            empty.textContent = "No calendars linked";
+            empty.textContent = "No calendars linked yet.";
             list.appendChild(empty);
             return;
         }
         for (const cal of items) {
-            const li = document.createElement("li");
+            const prov = CAL_PROVIDERS[cal.driver] ||
+                {name: cal.driver || "Calendar", hue: 256};
+            const item = document.createElement("div");
+            item.className = "cal-item";
+
+            const ico = document.createElement("div");
+            ico.className = "cal-ico";
+            ico.style.background = "oklch(0.55 0.15 " + prov.hue + ")";
+            ico.innerHTML = icon("calendar", 17);
+            item.appendChild(ico);
+
             const meta = document.createElement("div");
-            meta.textContent =
-                `${cal.name || "(no name)"} — ${cal.driver || ""}`;
+            meta.className = "cal-meta";
+            const name = document.createElement("div");
+            name.className = "cal-name";
+            name.textContent = cal.name || "(no name)";
+            const url = document.createElement("div");
+            url.className = "cal-url";
+            url.textContent = cal.url || "";
+            meta.appendChild(name);
+            meta.appendChild(url);
+            item.appendChild(meta);
+
+            const tag = document.createElement("span");
+            tag.className = "tag";
+            tag.textContent = prov.name;
+            item.appendChild(tag);
+
             const del = document.createElement("button");
-            del.className = "btn off tiny";
-            del.textContent = "Delete";
-            del.addEventListener("click", () => deleteCalendar(card, cal.id));
-            li.appendChild(meta);
-            li.appendChild(del);
-            list.appendChild(li);
+            del.type = "button";
+            del.className = "icon-btn";
+            del.style.width = "34px";
+            del.style.height = "34px";
+            del.title = "Remove";
+            del.innerHTML = icon("trash", 15);
+            del.style.color = "var(--danger-text)";
+            del.addEventListener("click", () =>
+                removeCalendar(view, cal.id));
+            item.appendChild(del);
+
+            list.appendChild(item);
         }
     } catch {}
 }
 
-async function linkCalendar(card) {
-    const deviceId = card.dataset.deviceId;
-    const sub = card.querySelector('.subform[data-form="calendar"]');
-    const driver = sub.querySelector("select.cal-driver").value;
-    let name = sub.querySelector("input.cal-name").value.trim();
-    const url = sub.querySelector("input.cal-url").value.trim();
-    if (!url) {
-        setStatus(card, "calendar", "URL is required", "error");
-        return;
+async function addCalendar(view) {
+    const deviceId = view.dataset.deviceId;
+    const driver = $(".cal-driver", view).value;
+    let name = $(".cal-name-input", view).value.trim();
+    const url = $(".cal-url-input", view).value.trim();
+    if (!url) { toast("Add a calendar URL first", true); return; }
+    if (!name) {
+        name = (CAL_PROVIDERS[driver] || {}).name ||
+            driver.charAt(0).toUpperCase() + driver.slice(1);
     }
-    if (!name) name = driver.charAt(0).toUpperCase() + driver.slice(1);
-    setStatus(card, "calendar", "Linking...", "");
     try {
         const data = await postJSON("/api/calendar/external/link", {
             url,
@@ -304,639 +841,592 @@ async function linkCalendar(card) {
             driver,
         });
         if (data.code === 1) {
-            setStatus(card, "calendar", "Linked", "ok");
-            sub.querySelector("input.cal-url").value = "";
-            sub.querySelector("input.cal-name").value = "";
-            loadCalendars(card);
+            toast("Calendar linked");
+            $(".cal-name-input", view).value = "";
+            $(".cal-url-input", view).value = "";
+            loadCalendars(view);
         } else {
-            setStatus(card, "calendar",
-                `Failed: ${data.msg || "?"}`, "error");
+            toast("Failed: " + (data.msg || "?"), true);
         }
     } catch (e) {
-        setStatus(card, "calendar", `Error: ${e}`, "error");
+        toast("Error: " + e, true);
     }
 }
 
-async function deleteCalendar(card, calId) {
+async function removeCalendar(view, calId) {
     try {
         const data = await postJSON("/api/calendar/delete", {id: calId});
         if (data.code === 1) {
-            setStatus(card, "calendar", "Deleted", "ok");
-            loadCalendars(card);
+            toast("Calendar removed");
+            loadCalendars(view);
         } else {
-            setStatus(card, "calendar",
-                `Delete failed: ${data.msg || "?"}`, "error");
+            toast("Delete failed: " + (data.msg || "?"), true);
         }
     } catch (e) {
-        setStatus(card, "calendar", `Delete error: ${e}`, "error");
+        toast("Delete error: " + e, true);
     }
 }
 
-// Photo listing (per type), paginated. Photos are fetched a page at a
-// time from the lightweight /admin/photos endpoint and rendered as
-// lazy-loading thumbnails (served downscaled + long-cached from
-// /admin/thumb), so opening a card with hundreds of photos no longer
-// downloads every full-resolution image up front. For AI photos the
-// thumbnail is clickable and opens the template-picker modal.
-const PHOTO_PAGE_SIZE = 24;
+/* ===================== remove device ===================== */
 
-function loadPhotos(card) {
-    const deviceId = card.dataset.deviceId;
-    for (const type of ["normal", "ai"]) {
-        const grid = card.querySelector(
-            `.photo-grid[data-photo-type="${type}"]`);
-        const count = card.querySelector(
-            `.ps-count[data-photo-type="${type}"]`);
-        if (!grid) continue;
-        // Fresh load: page 1, replacing whatever was there.
-        loadPhotoPage(deviceId, type, grid, count, 1, false);
-    }
-}
-
-async function loadPhotoPage(deviceId, type, grid, count, page, append) {
+async function deleteDevice(view) {
+    const deviceId = view.dataset.deviceId;
     try {
-        const data = await getJSON(
-            `/admin/photos?device_id=${deviceId}&type=${type}` +
-            `&page=${page}&page_size=${PHOTO_PAGE_SIZE}`);
-        const d = (data && data.data) || {};
-        const items = d.list || [];
-        const total = d.total || 0;
-        if (!append) grid.innerHTML = "";
-        for (const m of items) {
-            grid.appendChild(buildThumb(type, m));
-        }
-        grid.dataset.page = page;
-        grid.dataset.total = total;
-        if (count) count.textContent = total;
-        updateLoadMore(grid, deviceId, type, count, total);
-        updateDeleteButton(grid);
-    } catch {}
-}
-
-function buildThumb(type, m) {
-    const el = document.createElement("div");
-    el.className = `photo-thumb${type === "ai" ? " ai" : ""}`;
-    el.title = `${m.filename || ""} (id ${m.id})`;
-    // Every thumbnail carries its media id so a bulk delMedia can
-    // collect the checked ones regardless of normal/AI type.
-    el.dataset.mediaId = m.id;
-
-    const img = document.createElement("img");
-    img.className = "thumb-img";
-    img.loading = "lazy";
-    img.decoding = "async";
-    img.alt = m.filename || "";
-    img.src = m.thumb_url;
-    el.appendChild(img);
-
-    if (type === "ai") {
-        // The modal preview uses the full-resolution image; the grid tile
-        // uses the cheap thumbnail above.
-        el.dataset.url = m.url;
-        el.dataset.filename = m.filename || "";
-        el.dataset.templateId = m.template_id || 0;
-        el.dataset.templateType = m.template_type || 1;
-        el.dataset.display = m.display || "";
-        el.addEventListener("click", () => openTemplateModal(el));
-    }
-    // Selection checkbox for bulk delete. stopPropagation keeps a click on
-    // the checkbox from also opening the AI template modal.
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.className = "photo-select";
-    cb.title = "Select for deletion";
-    cb.addEventListener("click", (e) => e.stopPropagation());
-    cb.addEventListener("change", () => {
-        el.classList.toggle("selected", cb.checked);
-        updateDeleteButton(el.closest(".photo-grid"));
-    });
-    el.appendChild(cb);
-    return el;
-}
-
-// Render (or clear) the "Load more" control beneath a grid based on how
-// many of the total photos are currently loaded.
-function updateLoadMore(grid, deviceId, type, count, total) {
-    const section = grid.closest(".photo-section");
-    if (!section) return;
-    const more = section.querySelector(
-        `.photo-more[data-photo-type="${type}"]`);
-    if (!more) return;
-    const loaded = grid.querySelectorAll(".photo-thumb").length;
-    more.innerHTML = "";
-    if (loaded < total) {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "btn neutral tiny load-more-btn";
-        btn.textContent = `Load more (${loaded} of ${total})`;
-        btn.addEventListener("click", () => {
-            const next = (parseInt(grid.dataset.page, 10) || 1) + 1;
-            btn.disabled = true;
-            btn.textContent = "Loading...";
-            loadPhotoPage(deviceId, type, grid, count, next, true);
-        });
-        more.appendChild(btn);
-    } else if (total > PHOTO_PAGE_SIZE) {
-        const note = document.createElement("span");
-        note.className = "photo-more-note";
-        note.textContent = `All ${total} shown`;
-        more.appendChild(note);
-    }
-}
-
-// Reflect the number of checked thumbnails on the section's
-// "Delete selected (N)" button and enable/disable it accordingly.
-function updateDeleteButton(grid) {
-    const section = grid.closest(".photo-section");
-    if (!section) return;
-    const btn = section.querySelector(".photo-del-btn");
-    if (!btn) return;
-    const n = grid.querySelectorAll("input.photo-select:checked").length;
-    btn.disabled = n === 0;
-    btn.textContent = `Delete selected (${n})`;
-}
-
-// Bulk-delete the checked photos of one type via the same delMedia
-// endpoint / MQTT event the display app uses when removing photos.
-async function deleteSelectedPhotos(card, type) {
-    const deviceId = card.dataset.deviceId;
-    const grid = card.querySelector(
-        `.photo-grid[data-photo-type="${type}"]`);
-    if (!grid) return;
-    const ids = Array.from(
-        grid.querySelectorAll("input.photo-select:checked"))
-        .map((cb) => cb.closest(".photo-thumb").dataset.mediaId)
-        .filter(Boolean);
-    if (!ids.length) return;
-    if (!confirm(
-        `Delete ${ids.length} ${type} photo(s)? This cannot be undone.`)) {
-        return;
-    }
-    setStatus(card, "upload", `Deleting ${ids.length} photo(s)...`, "");
-    try {
-        const data = await postJSON("/api/ipad/media/delMedia", {
-            id: ids,
-            device_id: parseInt(deviceId, 10),
-        });
+        const data = await postJSON("/api/ipad/device/unbindUser",
+            {id: parseInt(deviceId, 10)});
         if (data.code === 1) {
-            setStatus(card, "upload",
-                `Deleted ${ids.length} photo(s)`, "ok");
-            // delMedia removes files in a background thread, so give it a
-            // moment before re-reading the (now shorter) list.
-            setTimeout(() => loadPhotos(card), 500);
+            toast("Display device removed");
+            const row = $('.device-row[data-view="device-' + deviceId +
+                '"]');
+            if (row) row.remove();
+            view.remove();
+            showView("chargers");
         } else {
-            setStatus(card, "upload",
-                `Delete failed: ${data.msg || "?"}`, "error");
+            toast("Failed: " + (data.msg || "?"), true);
         }
     } catch (e) {
-        setStatus(card, "upload", `Delete error: ${e}`, "error");
+        toast("Error: " + e, true);
     }
 }
 
-// --- Template-picker modal ---
+/* ===================== lightbox (normal photos) ===================== */
+
+function openLightbox(url) {
+    const lb = document.getElementById("lightbox");
+    $("img", lb).src = url;
+    lb.classList.add("open");
+}
+function closeLightbox() {
+    const lb = document.getElementById("lightbox");
+    lb.classList.remove("open");
+    $("img", lb).src = "";
+}
+
+/* ===================== AI template modal ===================== */
 //
-// Stores the photo currently being edited so the Save button knows which
-// /api/ipad/media/update payload to post. Cleared on close.
-let _templateModalCtx = null;
+// The modal keeps the design's layout (large live preview left, named
+// option list right) but the catalog is the real aspect-aware one: the
+// iPad webapp renders 10 templates on 4:3 displays (its inline
+// ``pq``/``mq`` catalogs) and the static ``mcol_1..5`` (horizontal) /
+// ``mrow_1..4`` (vertical) classes on 16:9 — so every option offered
+// here is a value the display can actually render.
 
-// Maps the display device's aspect plus the photo's saved orientation
-// to (button count, hint text). The catalog sizes match the iPad
-// webapp's catalogs at runtime so any pick the admin makes is a value
-// the iPad can actually render:
-//   * 4:3 displays use the inline-injected 10-template ``pq``/``mq``
-//     catalogs regardless of orientation, so we always show 10.
-//   * 16:9 displays use static CSS classes ``mcol_1..5`` (horizontal,
-//     5 templates) or ``mrow_1..4`` (vertical, 4 templates).
-// Returns an SVG markup for a template preview button. The SVG mimics
-// the actual layout the iPad webapp will render when this template_id
-// is saved on the matching aspect ratio. ``preview-text-bg`` rects pick
-// up a blue tint when the button is selected (see the
-// ``.template-btn.selected svg .preview-text-bg`` CSS rule).
-//
-// Colors:
-//   * #9e9e9e — image area
-//   * #e0e0e0 — text panel background (gets tinted on selection)
-//   * #888    — title/desc lines
-//   * #cfcfcf — overlay box background on dark image
-function _templatePreviewSvg(aspect, id) {
-    const bg = (color) => `<rect width="100" height="60" fill="${color}"/>`;
-    const img = (x, y, w, h) =>
-        `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="#9e9e9e"/>`;
-    const panel = (x, y, w, h, cls) =>
-        `<rect class="${cls}" x="${x}" y="${y}" width="${w}" height="${h}" fill="#e0e0e0"/>`;
-    const box = (x, y, w, h, fill) =>
-        `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3" fill="${fill}" stroke="#bbb" stroke-width="0.5"/>`;
-    const lines = (cx, y, w, count, color = "#888") => {
-        let s = "";
-        for (let i = 0; i < count; i++) {
-            const lw = w * (1 - i * 0.18);
-            s += `<rect x="${cx - lw / 2}" y="${y + i * 5}" width="${lw}" height="2" rx="1" fill="${color}"/>`;
-        }
-        return s;
-    };
-    const svg = (body) =>
-        `<svg viewBox="0 0 100 60" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">${body}</svg>`;
+const TPL_META_4X3 = [
+    {name: "Left bookend", desc: "Sidebar left, photo right with caption strip"},
+    {name: "Split canvas", desc: "Caption panel left, photo right"},
+    {name: "Corner cut", desc: "Photo with a diagonal caption area below"},
+    {name: "Asymmetric base", desc: "Photo on top, captions below"},
+    {name: "Cross boundary", desc: "Photo with an overlapping block"},
+    {name: "Dark card", desc: "Full photo with a dark caption card"},
+    {name: "Side arch", desc: "Caption left, photo right behind an arch"},
+    {name: "Top cover", desc: "Photo on top, centered caption below"},
+    {name: "Bottom left", desc: "Photo on top, caption bottom-left"},
+    {name: "Side ribbon", desc: "Photo left, caption ribbon right"},
+];
+const TPL_META_16X9_H = [
+    {name: "Photo left", desc: "Photo on the left, caption panel right"},
+    {name: "Photo right", desc: "Photo on the right, caption panel left"},
+    {name: "Overlay top-left", desc: "Full photo, caption card top-left"},
+    {name: "Overlay bottom-right", desc: "Full photo, caption card bottom-right"},
+    {name: "Overlay bottom-left", desc: "Full photo, translucent caption bottom-left"},
+];
+// mrow_1..4 (vertical photos on 16:9) reuse the first four designs.
+const TPL_META_16X9_V = TPL_META_16X9_H.slice(0, 4);
 
-    if (aspect === "4x3") {
-        // Mirror the 10 entries in the webapp's ``pq`` catalog.
-        switch (id) {
-            case 1: // Left Bookend: 25% sidebar left, 75% image right, gradient text-box at bottom
-                return svg(
-                    bg("#f5f5f5")
-                    + panel(0, 0, 25, 60, "preview-text-bg")
-                    + img(25, 0, 75, 60)
-                    + '<rect x="25" y="44" width="75" height="16" fill="rgba(0,0,0,0.45)"/>'
-                    + lines(62, 50, 40, 2, "#fff")
-                    + lines(8, 28, 14, 2, "#999")
-                );
-            case 2: // Split Canvas: 40% text left, 60% image right
-                return svg(
-                    bg("#f5f5f5")
-                    + panel(0, 0, 40, 60, "preview-text-bg")
-                    + img(40, 0, 60, 60)
-                    + lines(20, 28, 26, 2, "#888")
-                );
-            case 3: // Corner Cut: full-width image with diagonal clip + text bottom
-                return svg(
-                    bg("#f5f5f5")
-                    + '<polygon points="0,0 100,0 100,30 0,40" fill="#9e9e9e"/>'
-                    + lines(50, 47, 50, 2, "#888")
-                );
-            case 4: // Asymmetric Base: image 72%, text bar bottom
-                return svg(
-                    bg("#f5f5f5")
-                    + img(0, 0, 100, 43)
-                    + lines(30, 50, 30, 2, "#888")
-                    + lines(70, 50, 24, 2, "#888")
-                );
-            case 5: // Cross Boundary: image 75% top + cross block
-                return svg(
-                    bg("#f5f5f5")
-                    + img(0, 0, 100, 45)
-                    + '<rect x="55" y="32" width="35" height="18" fill="#5a5a5a"/>'
-                    + lines(20, 53, 22, 1, "#888")
-                );
-            case 6: // Dark Card: full image + dark text card
-                return svg(
-                    bg("#9e9e9e")
-                    + '<rect x="20" y="38" width="60" height="14" rx="2" fill="#333"/>'
-                    + lines(50, 42, 36, 2, "#cfcfcf")
-                );
-            case 7: // Side Arch: 38% text left, 62% image right with arch
-                return svg(
-                    bg("#f5f5f5")
-                    + panel(0, 0, 38, 60, "preview-text-bg")
-                    + '<path d="M 38,0 L 100,0 L 100,60 L 38,60 Q 18,30 38,0 Z" fill="#9e9e9e"/>'
-                    + lines(19, 28, 22, 2, "#888")
-                );
-            case 8: // Legacy Top Cover: image top 75%, text strip bottom centered
-                return svg(
-                    bg("#f5f5f5")
-                    + img(0, 0, 100, 45)
-                    + lines(50, 51, 50, 2, "#888")
-                );
-            case 9: // Legacy Bottom Left: image top 75%, text bottom-left
-                return svg(
-                    bg("#f5f5f5")
-                    + img(0, 0, 100, 45)
-                    + lines(20, 51, 28, 2, "#888")
-                );
-            case 10: // Legacy Side Ribbon: image left 75%, text right ribbon
-                return svg(
-                    bg("#f5f5f5")
-                    + img(0, 0, 75, 60)
-                    + panel(75, 0, 25, 60, "preview-text-bg")
-                    + lines(87, 18, 16, 4, "#888")
-                );
-        }
-    }
+function templateCatalog(aspect, templateType) {
+    if (aspect === "4x3") return TPL_META_4X3;
+    return templateType === 2 ? TPL_META_16X9_V : TPL_META_16X9_H;
+}
 
-    // 16:9 catalog. mcol_1..5 (horizontal) and mrow_1..4 (vertical) end
-    // up with the same visual split logic per the override block in
-    // webapp/index.html: split layout for 1/2, full-image overlay for
-    // 3/4/5. mrow has 4 entries; we reuse the first four designs.
-    switch (id) {
-        case 1: // mcol_1: image left half, text right half
-            return svg(
-                bg("#f5f5f5")
-                + panel(50, 0, 50, 60, "preview-text-bg")
-                + img(0, 0, 50, 60)
-                + lines(75, 26, 28, 2, "#888")
-            );
-        case 2: // mcol_2: image right half, text left half
-            return svg(
-                bg("#f5f5f5")
-                + panel(0, 0, 50, 60, "preview-text-bg")
-                + img(50, 0, 50, 60)
-                + lines(25, 26, 28, 2, "#888")
-            );
-        case 3: // mcol_3: full image + text overlay top-left (with our override)
-            return svg(
-                bg("#9e9e9e")
-                + box(6, 8, 36, 18, "#e8e8e8")
-                + lines(24, 13, 24, 2, "#666")
-            );
-        case 4: // mcol_4: full image + text overlay bottom-right (with our override)
-            return svg(
-                bg("#9e9e9e")
-                + box(58, 34, 36, 18, "#e8e8e8")
-                + lines(76, 39, 24, 2, "#666")
-            );
-        case 5: // mcol_5: full image + small text overlay bottom-left (translucent)
-            return svg(
-                bg("#9e9e9e")
-                + box(6, 38, 32, 14, "rgba(255,255,255,0.85)")
-                + lines(22, 41, 20, 2, "#666")
-            );
-    }
-    // Fallback for unexpected ids: just label them numerically.
-    return svg(
-        bg("#f5f5f5")
-        + `<text x="50" y="36" font-family="sans-serif" font-size="20" text-anchor="middle" fill="#888">${id}</text>`
-    );
+function templateChipName(aspect, templateType, id) {
+    const cat = templateCatalog(aspect, templateType);
+    if (id >= 1 && id <= cat.length) return cat[id - 1].name;
+    return id ? "Style " + id : "Auto";
 }
 
 function _templatePickerSpec(aspect, templateType) {
     if (aspect === "4x3") {
         return {
             count: 10,
-            hint: `Image has a ${templateType === 2 ? "vertical" : "horizontal"}` +
-                ` layout. Ten styles available for 4:3 displays.`,
+            hint: "Photo has a " +
+                (templateType === 2 ? "vertical" : "horizontal") +
+                " layout · ten templates suit 4:3 displays.",
         };
     }
     if (templateType === 2) {
         return {
             count: 4,
-            hint: "Image has a vertical layout. Four styles available for 16:9 displays.",
+            hint: "Photo has a vertical layout · " +
+                "four templates suit 16:9 displays.",
         };
     }
     return {
         count: 5,
-        hint: "Image has a horizontal layout. Five styles available for 16:9 displays.",
+        hint: "Photo has a horizontal layout · " +
+            "five templates suit 16:9 displays.",
     };
 }
 
-function openTemplateModal(thumb) {
+// Renders an SVG preview of the layout the iPad webapp shows for this
+// template_id on the given display aspect. When ``photoUrl`` is given,
+// the photo itself is composited into the image areas (cover-cropped),
+// so the modal preview is a true "how it will look" rendering;
+// otherwise the image areas are plain grey. ``preview-text-bg`` rects
+// pick up an accent tint when the parent option is selected.
+let _svgUid = 0;
+function _templatePreviewSvg(aspect, id, photoUrl) {
+    const W = aspect === "4x3" ? 120 : 160;
+    const H = 90;
+    // Layouts are authored on the original 100x60 grid; map into the
+    // aspect-correct viewBox so embedded photos keep their proportions.
+    const fx = (v) => +(v / 100 * W).toFixed(2);
+    const fy = (v) => +(v / 60 * H).toFixed(2);
+    const esc = (u) => String(u || "")
+        .replace(/&/g, "&amp;").replace(/"/g, "&quot;")
+        .replace(/</g, "%3C").replace(/>/g, "%3E");
+    const defs = [];
+
+    const photo = (x, y, w, h, clip) => {
+        const attrs = 'x="' + fx(x) + '" y="' + fy(y) + '" width="' +
+            fx(w) + '" height="' + fy(h) + '"' +
+            (clip ? ' clip-path="url(#' + clip + ')"' : "");
+        if (photoUrl) {
+            return '<image href="' + esc(photoUrl) + '" ' + attrs +
+                ' preserveAspectRatio="xMidYMid slice"/>';
+        }
+        return '<rect ' + attrs + ' fill="#9e9e9e"/>';
+    };
+    const clipPoly = (points) => {
+        const cid = "tplclip" + (++_svgUid);
+        const pts = points.map(
+            ([x, y]) => fx(x) + "," + fy(y)).join(" ");
+        defs.push('<clipPath id="' + cid + '"><polygon points="' +
+            pts + '"/></clipPath>');
+        return cid;
+    };
+    const clipPath = (d) => {
+        const cid = "tplclip" + (++_svgUid);
+        defs.push('<clipPath id="' + cid + '"><path d="' + d +
+            '"/></clipPath>');
+        return cid;
+    };
+    const bg = (color) => '<rect width="' + W + '" height="' + H +
+        '" fill="' + color + '"/>';
+    const fullPhoto = () => photo(0, 0, 100, 60);
+    const panel = (x, y, w, h) =>
+        '<rect class="preview-text-bg" x="' + fx(x) + '" y="' + fy(y) +
+        '" width="' + fx(w) + '" height="' + fy(h) + '" fill="#e0e0e0"/>';
+    const box = (x, y, w, h, fill) =>
+        '<rect x="' + fx(x) + '" y="' + fy(y) + '" width="' + fx(w) +
+        '" height="' + fy(h) + '" rx="3" fill="' + fill +
+        '" stroke="#bbb" stroke-width="0.5"/>';
+    const lines = (cx, y, w, count, color) => {
+        let s = "";
+        for (let i = 0; i < count; i++) {
+            const lw = w * (1 - i * 0.18);
+            s += '<rect x="' + fx(cx - lw / 2) + '" y="' + fy(y + i * 5) +
+                '" width="' + fx(lw) + '" height="' + fy(2) +
+                '" rx="1" fill="' + (color || "#888") + '"/>';
+        }
+        return s;
+    };
+    const svg = (body) =>
+        '<svg viewBox="0 0 ' + W + " " + H +
+        '" xmlns="http://www.w3.org/2000/svg">' +
+        (defs.length ? "<defs>" + defs.join("") + "</defs>" : "") +
+        body + "</svg>";
+
+    if (aspect === "4x3") {
+        // Mirror the 10 entries in the webapp's ``pq``/``mq`` catalogs.
+        switch (id) {
+            case 1: // Left bookend
+                return svg(
+                    bg("#f5f5f5")
+                    + panel(0, 0, 25, 60)
+                    + photo(25, 0, 75, 60)
+                    + '<rect x="' + fx(25) + '" y="' + fy(44) +
+                      '" width="' + fx(75) + '" height="' + fy(16) +
+                      '" fill="rgba(0,0,0,0.45)"/>'
+                    + lines(62, 50, 40, 2, "#fff")
+                    + lines(8, 28, 14, 2, "#999")
+                );
+            case 2: // Split canvas
+                return svg(
+                    bg("#f5f5f5")
+                    + panel(0, 0, 40, 60)
+                    + photo(40, 0, 60, 60)
+                    + lines(20, 28, 26, 2)
+                );
+            case 3: { // Corner cut
+                const cid = clipPoly(
+                    [[0, 0], [100, 0], [100, 30], [0, 40]]);
+                return svg(
+                    bg("#f5f5f5")
+                    + photo(0, 0, 100, 40, cid)
+                    + lines(50, 47, 50, 2)
+                );
+            }
+            case 4: // Asymmetric base
+                return svg(
+                    bg("#f5f5f5")
+                    + photo(0, 0, 100, 43)
+                    + lines(30, 50, 30, 2)
+                    + lines(70, 50, 24, 2)
+                );
+            case 5: // Cross boundary
+                return svg(
+                    bg("#f5f5f5")
+                    + photo(0, 0, 100, 45)
+                    + '<rect x="' + fx(55) + '" y="' + fy(32) +
+                      '" width="' + fx(35) + '" height="' + fy(18) +
+                      '" fill="#5a5a5a"/>'
+                    + lines(20, 53, 22, 1)
+                );
+            case 6: // Dark card
+                return svg(
+                    (photoUrl ? fullPhoto() : bg("#9e9e9e"))
+                    + '<rect x="' + fx(20) + '" y="' + fy(38) +
+                      '" width="' + fx(60) + '" height="' + fy(14) +
+                      '" rx="2" fill="#333"/>'
+                    + lines(50, 42, 36, 2, "#cfcfcf")
+                );
+            case 7: { // Side arch
+                const d = "M " + fx(38) + "," + fy(0) +
+                    " L " + fx(100) + "," + fy(0) +
+                    " L " + fx(100) + "," + fy(60) +
+                    " L " + fx(38) + "," + fy(60) +
+                    " Q " + fx(18) + "," + fy(30) +
+                    " " + fx(38) + "," + fy(0) + " Z";
+                const cid = clipPath(d);
+                return svg(
+                    bg("#f5f5f5")
+                    + panel(0, 0, 38, 60)
+                    + photo(18, 0, 82, 60, cid)
+                    + lines(13, 28, 18, 2)
+                );
+            }
+            case 8: // Top cover
+                return svg(
+                    bg("#f5f5f5")
+                    + photo(0, 0, 100, 45)
+                    + lines(50, 51, 50, 2)
+                );
+            case 9: // Bottom left
+                return svg(
+                    bg("#f5f5f5")
+                    + photo(0, 0, 100, 45)
+                    + lines(20, 51, 28, 2)
+                );
+            case 10: // Side ribbon
+                return svg(
+                    bg("#f5f5f5")
+                    + photo(0, 0, 75, 60)
+                    + panel(75, 0, 25, 60)
+                    + lines(87, 18, 16, 4)
+                );
+        }
+    }
+
+    // 16:9 catalog. mcol_1..5 (horizontal) and mrow_1..4 (vertical) per
+    // the override block in webapp/index.html: split layout for 1/2,
+    // full-photo overlay for 3/4/5.
+    switch (id) {
+        case 1: // photo left half, text right half
+            return svg(
+                bg("#f5f5f5")
+                + panel(50, 0, 50, 60)
+                + photo(0, 0, 50, 60)
+                + lines(75, 26, 28, 2)
+            );
+        case 2: // photo right half, text left half
+            return svg(
+                bg("#f5f5f5")
+                + panel(0, 0, 50, 60)
+                + photo(50, 0, 50, 60)
+                + lines(25, 26, 28, 2)
+            );
+        case 3: // full photo + caption card top-left
+            return svg(
+                (photoUrl ? fullPhoto() : bg("#9e9e9e"))
+                + box(6, 8, 36, 18, "#e8e8e8")
+                + lines(24, 13, 24, 2, "#666")
+            );
+        case 4: // full photo + caption card bottom-right
+            return svg(
+                (photoUrl ? fullPhoto() : bg("#9e9e9e"))
+                + box(58, 34, 36, 18, "#e8e8e8")
+                + lines(76, 39, 24, 2, "#666")
+            );
+        case 5: // full photo + translucent caption bottom-left
+            return svg(
+                (photoUrl ? fullPhoto() : bg("#9e9e9e"))
+                + box(6, 38, 32, 14, "rgba(255,255,255,0.85)")
+                + lines(22, 41, 20, 2, "#666")
+            );
+    }
+    // Fallback for unexpected ids: label them numerically.
+    return svg(
+        bg("#f5f5f5")
+        + '<text x="' + (W / 2) + '" y="' + (H / 2 + 6) +
+        '" font-family="sans-serif" font-size="20" ' +
+        'text-anchor="middle" fill="#888">' + id + "</text>"
+    );
+}
+
+// Context for the photo currently being edited; cleared on close.
+let _tplCtx = null;
+
+function openTemplateModal(view, m) {
     const modal = document.getElementById("template-modal");
     if (!modal) return;
-    const card = thumb.closest(".card");
-    _templateModalCtx = {
-        card,
-        thumb,
-        mediaId: thumb.dataset.mediaId,
-        url: thumb.dataset.url,
-        filename: thumb.dataset.filename,
-        display: thumb.dataset.display || "",
-        templateId: parseInt(thumb.dataset.templateId, 10) || 0,
-        templateType: parseInt(thumb.dataset.templateType, 10) || 1,
-        aspect: (card && card.dataset.aspect) || "16x9",
+    _tplCtx = {
+        view,
+        item: m,
+        aspect: view.dataset.aspect || "16x9",
+        templateType: parseInt(m.template_type, 10) || 1,
+        orig: parseInt(m.template_id, 10) || 0,
+        sel: parseInt(m.template_id, 10) || 0,
     };
 
-    modal.querySelector(".modal-preview").style.backgroundImage =
-        `url("${_templateModalCtx.url.replace(/"/g, "%22")}")`;
-    modal.querySelector(".modal-meta").textContent =
-        `${_templateModalCtx.filename || "(unnamed)"}  ·  id ${_templateModalCtx.mediaId}`;
+    $(".modal-meta", modal).textContent = m.filename || "(unnamed)";
+    const orient = _tplCtx.templateType === 2 ? "vertical" : "horizontal";
+    const orientEl = $(".tpl-orient", modal);
+    orientEl.innerHTML = icon(
+        orient === "vertical" ? "smartphone" : "monitor", 13);
+    orientEl.appendChild(document.createTextNode(orient));
 
-    const spec = _templatePickerSpec(
-        _templateModalCtx.aspect, _templateModalCtx.templateType);
-    const grid = modal.querySelector(".template-grid");
-    // Grid is always 5 columns; for 4:3 (10 templates) the second row
-    // wraps automatically. The buttons keep a 16:9 aspect ratio so
-    // every preview reads the same regardless of how many there are.
+    const frame = $(".display-frame", modal);
+    frame.dataset.aspect = _tplCtx.aspect;
+
+    const spec = _templatePickerSpec(_tplCtx.aspect, _tplCtx.templateType);
+    $(".template-hint", modal).textContent = spec.hint;
+
+    const cat = templateCatalog(_tplCtx.aspect, _tplCtx.templateType);
+    const grid = $(".template-grid", modal);
     grid.innerHTML = "";
     for (let i = 1; i <= spec.count; i++) {
+        const meta = cat[i - 1] || {name: "Style " + i, desc: ""};
         const btn = document.createElement("button");
         btn.type = "button";
-        btn.className = "template-btn";
+        btn.className = "tpl-opt template-btn" +
+            (i === _tplCtx.sel ? " active" : "");
         btn.dataset.templateId = i;
-        btn.title = `Style ${i}`;
-        btn.innerHTML = _templatePreviewSvg(_templateModalCtx.aspect, i);
-        if (i === _templateModalCtx.templateId) btn.classList.add("selected");
-        btn.addEventListener("click", (e) => {
-            for (const b of grid.querySelectorAll(".template-btn")) {
-                b.classList.remove("selected");
-            }
-            e.currentTarget.classList.add("selected");
-            _templateModalCtx.templateId =
-                parseInt(e.currentTarget.dataset.templateId, 10);
+        btn.innerHTML =
+            '<span class="tpl-thumb' +
+            (_tplCtx.aspect === "4x3" ? " aspect-4x3" : "") + '">' +
+            _templatePreviewSvg(_tplCtx.aspect, i, m.url) + "</span>" +
+            '<span class="tpl-opt-meta">' +
+            '<span class="tpl-opt-name"></span>' +
+            '<span class="tpl-opt-desc"></span></span>' +
+            '<span class="tpl-radio">' + icon("check", 13) + "</span>";
+        $(".tpl-opt-name", btn).textContent = meta.name;
+        $(".tpl-opt-desc", btn).textContent = meta.desc;
+        btn.addEventListener("click", () => {
+            _tplCtx.sel = i;
+            $all(".tpl-opt", grid).forEach(
+                (b) => b.classList.toggle("active", b === btn));
+            updateTemplatePreview();
         });
         grid.appendChild(btn);
     }
 
-    const hintEl = modal.querySelector(".template-hint");
-    if (hintEl) hintEl.textContent = spec.hint;
-
-    modal.querySelector(".modal .status").textContent = "";
-    modal.querySelector(".modal .status").className = "status";
+    updateTemplatePreview();
     modal.classList.add("open");
+}
+
+function updateTemplatePreview() {
+    if (!_tplCtx) return;
+    const modal = document.getElementById("template-modal");
+    const frame = $(".display-frame", modal);
+    frame.innerHTML = _templatePreviewSvg(
+        _tplCtx.aspect, _tplCtx.sel || 1, _tplCtx.item.url);
+    const save = $(".save-template-btn", modal);
+    save.disabled = !_tplCtx.sel || _tplCtx.sel === _tplCtx.orig;
 }
 
 function closeTemplateModal() {
     const modal = document.getElementById("template-modal");
     if (modal) modal.classList.remove("open");
-    _templateModalCtx = null;
+    _tplCtx = null;
 }
 
 async function saveTemplateModal() {
-    if (!_templateModalCtx) return;
-    const modal = document.getElementById("template-modal");
-    const statusEl = modal.querySelector(".modal .status");
-    if (!_templateModalCtx.templateId || _templateModalCtx.templateId < 1) {
-        statusEl.textContent = "Pick a style first";
-        statusEl.className = "status error";
-        return;
-    }
-    statusEl.textContent = "Saving...";
-    statusEl.className = "status";
-    // Preserve any positionX/Y the iPad already saved; the picker only
-    // changes the layout. ``display`` is a JSON string when present.
-    const display = _templateModalCtx.display || "";
+    if (!_tplCtx || !_tplCtx.sel) return;
+    const ctx = _tplCtx;
     try {
+        // Preserve any positionX/Y the iPad already saved; the picker
+        // only changes the layout. ``display`` is a JSON string.
         const data = await postJSON("/api/ipad/media/update", {
-            id: _templateModalCtx.mediaId,
-            display,
-            template_id: _templateModalCtx.templateId,
-            template_type: _templateModalCtx.templateType,
+            id: ctx.item.id,
+            display: ctx.item.display || "",
+            template_id: ctx.sel,
+            template_type: ctx.templateType,
         });
         if (data.code !== 1) {
-            statusEl.textContent = `Failed: ${data.msg || "?"}`;
-            statusEl.className = "status error";
+            toast("Failed: " + (data.msg || "?"), true);
             return;
         }
-        // Reflect the new value on the thumbnail so a follow-up open
-        // shows the new selection without a fresh mediaList round-trip.
-        if (_templateModalCtx.thumb) {
-            _templateModalCtx.thumb.dataset.templateId =
-                _templateModalCtx.templateId;
-            _templateModalCtx.thumb.dataset.templateType =
-                _templateModalCtx.templateType;
-        }
-        statusEl.textContent = "Saved";
-        statusEl.className = "status ok";
-        setTimeout(closeTemplateModal, 600);
+        ctx.item.template_id = ctx.sel;
+        ctx.item.template_type = ctx.templateType;
+        toast("Template set to “" + templateChipName(
+            ctx.aspect, ctx.templateType, ctx.sel) + "”");
+        renderGallery(ctx.view);
+        closeTemplateModal();
     } catch (e) {
-        statusEl.textContent = `Error: ${e}`;
-        statusEl.className = "status error";
+        toast("Error: " + e, true);
     }
 }
 
-// Photo upload
-async function uploadPhotos(card) {
-    const deviceId = card.dataset.deviceId;
-    const sub = card.querySelector('.subform[data-form="upload"]');
-    const input = sub.querySelector('input[type="file"]');
-    if (!input.files.length) {
-        setStatus(card, "upload", "No files selected", "error");
-        return;
-    }
-    const files = Array.from(input.files);
-    const typeRadio = sub.querySelector(
-        'input[type="radio"][name^="upload-type-"]:checked');
-    const uploadType = typeRadio ? typeRadio.value : "normal";
+/* ===================== wiring ===================== */
 
-    // Upload sequentially (one file at a time) to avoid overwhelming the
-    // server when many photos are selected. Mirrors how the native app
-    // uploads photos one by one.
-    const assetIds = [];
-    try {
-        for (const [idx, file] of files.entries()) {
-            setStatus(card, "upload",
-                `Uploading ${idx + 1}/${files.length} as ${uploadType}...`, "");
-            const fd = new FormData();
-            fd.append("file", file);
-            fd.append("key", file.name);
-            const suffix = (file.name.split(".").pop() || "jpg").toLowerCase();
-            fd.append("x:suffix", suffix);
-            const r = await fetch("/api/user/asset/upload",
-                {method: "POST", body: fd});
-            const data = await r.json();
-            if (data && data.code === 1 && data.data && data.data.id) {
-                assetIds.push(data.data.id);
-            } else {
-                throw new Error(`upload rejected for ${file.name}`);
-            }
-        }
-        const data = await postJSON("/api/ipad/media/setMedia", {
-            device_id: parseInt(deviceId, 10),
-            asset_ids: assetIds,
-            type: uploadType,
-        });
-        if (data.code === 1) {
-            setStatus(card, "upload",
-                `Uploaded ${assetIds.length} photo(s)`, "ok");
-            input.value = "";
-            loadPhotos(card);
-        } else {
-            setStatus(card, "upload",
-                `setMedia failed: ${data.msg || "?"}`, "error");
-        }
-    } catch (e) {
-        setStatus(card, "upload", `Upload failed: ${e}`, "error");
-    }
-}
+function wireDeviceView(view) {
+    const state = getState(view.dataset.deviceId);
 
-// Wire up after DOM is ready
-// Wire up after DOM is ready
-document.querySelectorAll(".card").forEach(function(card) {
-    var head = card.querySelector(".card-head");
-    head.addEventListener("click", function() {
-        card.classList.toggle("open");
-        if (card.classList.contains("open") && !card.dataset.loaded) {
-            card.dataset.loaded = "1";
-            loadClock(card);
-            loadWeather(card);
-            loadCalendars(card);
-            loadPhotos(card);
-        }
-    });
-
-    var uploadBtn = card.querySelector(
-      '.subform[data-form="upload"] .upload-btn');
-    if (uploadBtn) uploadBtn.addEventListener(
-      "click", function() { uploadPhotos(card); });
-
-    var clockBtn = card.querySelector(
-      '.subform[data-form="clock"] .save-btn');
-    if (clockBtn) clockBtn.addEventListener(
-      "click", function() { saveClock(card); });
-
-    var weatherSearchBtn = card.querySelector(
-      '.subform[data-form="weather"] .search-btn');
-    if (weatherSearchBtn) weatherSearchBtn.addEventListener(
-      "click", function() { searchCity(card); });
-
-    var weatherSaveBtn = card.querySelector(
-      '.subform[data-form="weather"] .save-btn');
-    if (weatherSaveBtn) weatherSaveBtn.addEventListener(
-      "click", function() { saveWeather(card); });
-
-    var calBtn = card.querySelector(
-      '.subform[data-form="calendar"] .link-btn');
-    if (calBtn) calBtn.addEventListener(
-      "click", function() { linkCalendar(card); });
-
-    var delBtn = card.querySelector(
-      '.subform[data-form="delete"] .delete-btn');
-    if (delBtn) delBtn.addEventListener(
-      "click", function() { deleteDevice(card); });
-
-    card.querySelectorAll('.photo-del-btn').forEach(function(btn) {
-        btn.addEventListener("click", function() {
-            deleteSelectedPhotos(card, btn.dataset.photoType);
+    // tabs
+    $all(".tab", view).forEach((tab) => {
+        tab.addEventListener("click", () => {
+            $all(".tab", view).forEach(
+                (t) => t.classList.toggle("active", t === tab));
+            $all(".tab-panel", view).forEach((p) => p.classList.toggle(
+                "active", p.dataset.panel === tab.dataset.tab));
         });
     });
-});
 
-function deleteDevice(card) {
-    var deviceId = card.dataset.deviceId;
-    var name = (card.querySelector(".card-head .name") || {}).textContent ||
-      ("Device " + deviceId);
-    if (!confirm(
-      "Delete \"" + name + "\" and all its data?\n\n" +
-      "This removes the session, charger binding, calendars, AI " +
-      "album config, photo settings, and the photos/, " +
-      "photos_with_ai/ and logs/ directories. It cannot be undone."
-    )) {
-        return;
-    }
-    setStatus(card, "delete", "Deleting...", "");
-    postJSON("/api/ipad/device/unbindUser", {id: parseInt(deviceId, 10)})
-      .then(function(data) {
-          if (data.code === 1) {
-              setStatus(card, "delete", "Deleted", "ok");
-              card.parentNode.removeChild(card);
-          } else {
-              setStatus(card, "delete",
-                "Failed: " + (data.msg || "?"), "error");
-          }
-      })
-      .catch(function(e) {
-          setStatus(card, "delete", "Error: " + e, "error");
-      });
+    // photos: upload kind
+    wireSeg($('[data-seg="upload-kind"]', view), (v) => {
+        state.kind = v;
+        const label = v === "ai" ? "AI" : "Normal";
+        $all(".kind-label", view).forEach(
+            (el) => { el.textContent = label; });
+    });
+
+    // photos: dropzone
+    const dz = $(".dropzone", view);
+    const fileInput = $('input[type="file"]', dz);
+    dz.addEventListener("click", () => fileInput.click());
+    dz.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        dz.classList.add("drag");
+    });
+    dz.addEventListener("dragleave", () => dz.classList.remove("drag"));
+    dz.addEventListener("drop", (e) => {
+        e.preventDefault();
+        dz.classList.remove("drag");
+        handleFiles(view, e.dataTransfer.files);
+    });
+    fileInput.addEventListener("change", (e) => {
+        handleFiles(view, e.target.files);
+        e.target.value = "";
+    });
+
+    // photos: filter + sort + delete
+    wireSeg($('[data-seg="filter"]', view), (v) => {
+        state.filter = v;
+        renderGallery(view);
+    });
+    $(".photo-sort", view).addEventListener("change", (e) => {
+        state.sort = e.target.value;
+        loadPhotos(view);
+    });
+    $(".delete-selected", view).addEventListener(
+        "click", () => deleteSelectedPhotos(view));
+
+    // clock
+    wireSeg($('[data-seg="clock-format"]', view));
+    wireStyleGrid($('[data-style-grid="clock"]', view));
+    $(".clock-save", view).addEventListener(
+        "click", () => saveClock(view));
+
+    // weather
+    wireSeg($('[data-seg="unit"]', view));
+    wireStyleGrid($('[data-style-grid="weather"]', view));
+    $(".city-search-btn", view).addEventListener(
+        "click", () => searchCity(view));
+    $(".city-query", view).addEventListener("keydown", (e) => {
+        if (e.key === "Enter") searchCity(view);
+    });
+    $(".weather-save", view).addEventListener(
+        "click", () => saveWeather(view));
+
+    // calendars
+    $(".cal-add-btn", view).addEventListener(
+        "click", () => addCalendar(view));
+    $(".cal-url-input", view).addEventListener("keydown", (e) => {
+        if (e.key === "Enter") addCalendar(view);
+    });
+
+    // remove device (inline confirm step, as designed)
+    const removeBtn = $(".delete-device-btn", view);
+    const confirmRow = $(".confirm-row", view);
+    removeBtn.addEventListener("click", () => {
+        removeBtn.hidden = true;
+        confirmRow.hidden = false;
+    });
+    $(".confirm-cancel", view).addEventListener("click", () => {
+        confirmRow.hidden = true;
+        removeBtn.hidden = false;
+    });
+    $(".confirm-yes", view).addEventListener(
+        "click", () => deleteDevice(view));
 }
 
-// Wire up the template-picker modal once the DOM is ready.
-(() => {
+(function init() {
+    // sidebar navigation
+    $all(".nav-item, .device-row").forEach((btn) => {
+        btn.addEventListener("click", () => showView(btn.dataset.view));
+    });
+    $("#device-search").addEventListener(
+        "input", (e) => filterDevices(e.target.value));
+
+    // mobile drawer
+    $("#drawer-open").addEventListener("click", openDrawer);
+    $("#drawer-scrim").addEventListener("click", closeDrawer);
+
+    // device views
+    $all(".device-view").forEach(wireDeviceView);
+
+    // lightbox
+    const lb = document.getElementById("lightbox");
+    lb.addEventListener("click", closeLightbox);
+    $(".lb-close", lb).addEventListener("click", closeLightbox);
+
+    // template modal
     const modal = document.getElementById("template-modal");
-    if (!modal) return;
-    modal.querySelector(".close").addEventListener(
-        "click", closeTemplateModal);
-    modal.querySelector(".cancel-btn").addEventListener(
-        "click", closeTemplateModal);
-    modal.querySelector(".save-template-btn").addEventListener(
+    $(".close", modal).addEventListener("click", closeTemplateModal);
+    $(".cancel-btn", modal).addEventListener("click", closeTemplateModal);
+    $(".save-template-btn", modal).addEventListener(
         "click", saveTemplateModal);
-    // Click on the dim backdrop (but not the modal itself) closes it.
     modal.addEventListener("click", (e) => {
         if (e.target === modal) closeTemplateModal();
     });
     document.addEventListener("keydown", (e) => {
-        if (e.key === "Escape" && modal.classList.contains("open")) {
-            closeTemplateModal();
-        }
+        if (e.key !== "Escape") return;
+        if (modal.classList.contains("open")) closeTemplateModal();
+        else if (lb.classList.contains("open")) closeLightbox();
+    });
+
+    // 10s background refresh: charger rows (tbody swap) + display-device
+    // presence indicators. Only those nodes are touched, so any open
+    // device view and in-flight form keep their state. The topbar pill
+    // toggles the whole refresh on/off.
+    updateChargersSub();
+    setInterval(() => {
+        if (!liveRefresh) return;
+        refreshChargers();
+        refreshDeviceStatus();
+    }, 10000);
+    const liveToggle = document.getElementById("live-toggle");
+    if (liveToggle) {
+        liveToggle.addEventListener("click",
+            () => setLiveRefresh(!liveRefresh));
+    }
+
+    // initial view: deep-link via #device-<id>, else chargers
+    const hash = (location.hash || "").replace(/^#/, "");
+    showView(hash && document.getElementById("view-" + hash)
+        ? hash : "chargers");
+    window.addEventListener("hashchange", () => {
+        const h = (location.hash || "").replace(/^#/, "");
+        if (h && document.getElementById("view-" + h)) showView(h);
     });
 })();
-
-// Background-refresh the chargers table every 10s.  Runs regardless of
-// whether a settings card is open — only the table body is replaced, so
-// open cards and their in-flight forms are preserved.
-setInterval(refreshChargers, 10000);

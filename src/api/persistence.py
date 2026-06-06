@@ -38,6 +38,7 @@ def load_devices():
                 "charging_switch": row["charging_switch"],
                 "charging_switch_reported":
                     row["charging_switch_reported"],
+                "admin_switch": row["admin_switch"],
                 "polling": row["polling"],
                 "cloud_id": row["cloud_id"],
                 "last_seen": row["last_seen"],
@@ -58,8 +59,8 @@ def save_devices(devices):
                 INSERT INTO devices
                     (uuid, mac, firmware, wifi_name, voltage, current_,
                      battery, charging_switch, charging_switch_reported,
-                     polling, cloud_id, last_seen, mode)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     admin_switch, polling, cloud_id, last_seen, mode)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 uuid,
                 info.get("mac"),
@@ -70,6 +71,7 @@ def save_devices(devices):
                 info.get("battery"),
                 info.get("charging_switch"),
                 info.get("charging_switch_reported"),
+                info.get("admin_switch"),
                 info.get("polling"),
                 info.get("cloud_id"),
                 info.get("last_seen"),
@@ -160,6 +162,7 @@ def _row_to_session(row):
         "bind_at": row["bind_at"],
         "created_at": row["created_at"],
         "last_login": row["last_login"],
+        "last_active": row["last_active"],
         "last_disconnected_at": row["last_disconnected_at"],
         "icharger_mac": row["icharger_mac"],
         "screensaver": json.loads(row["screensaver_json"] or "[]"),
@@ -199,15 +202,33 @@ def delete_session(sess_uuid):
         conn.close()
 
 
+def touch_session_last_active(sess_uuid, timestamp):
+    """Update only the `last_active` column on a single session row.
+
+    A no-op when the uuid has no row (an unknown device never creates a
+    session here). Touches no other column so it can run concurrently with
+    full-row writes without clobbering them.
+    """
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE sessions SET last_active = ? WHERE uuid = ?",
+            (timestamp, sess_uuid))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _insert_session(conn, sess_uuid, sess):
     """Insert a single session row."""
     conn.execute("""
         INSERT OR REPLACE INTO sessions
             (uuid, id, device_name, device_type, ios_version,
              width, height, user_id, user, is_ipad, is_h5,
-             bind_at, created_at, last_login, last_disconnected_at,
+             bind_at, created_at, last_login, last_active,
+             last_disconnected_at,
              icharger_mac, screensaver_json, display_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         sess_uuid,
         sess.get("id", 0),
@@ -223,6 +244,7 @@ def _insert_session(conn, sess_uuid, sess):
         sess.get("bind_at"),
         sess.get("created_at"),
         sess.get("last_login"),
+        sess.get("last_active", 0),
         sess.get("last_disconnected_at", 0),
         sess.get("icharger_mac", ""),
         json.dumps(sess.get("screensaver", [])),
@@ -623,5 +645,116 @@ def delete_media_settings_for_device(device_id):
             "DELETE FROM media_settings WHERE device_id = ?",
             (int(device_id),))
         conn.commit()
+    finally:
+        conn.close()
+
+
+# --- Photo metadata cache (admin grid sort: upload / capture date) ---
+
+def load_photo_metadata(device_id, media_type):
+    """Return {filename: {"file_mtime": float, "capture_time": int|None}}
+    for one device + media type. Backs the admin grid's upload/capture
+    sort without re-reading every image header on each page request."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT filename, file_mtime, capture_time FROM photo_metadata "
+            "WHERE device_id = ? AND media_type = ?",
+            (int(device_id), media_type)).fetchall()
+        return {
+            r["filename"]: {
+                "file_mtime": r["file_mtime"],
+                "capture_time": r["capture_time"],
+            }
+            for r in rows
+        }
+    except (ValueError, TypeError):
+        return {}
+    finally:
+        conn.close()
+
+
+def upsert_photo_metadata(device_id, media_type, filename, file_mtime,
+                          capture_time):
+    """Insert or refresh one photo's cached mtime + EXIF capture time."""
+    conn = get_connection()
+    try:
+        conn.execute("""
+            INSERT INTO photo_metadata
+                (device_id, media_type, filename, file_mtime, capture_time)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(device_id, media_type, filename) DO UPDATE SET
+                file_mtime = excluded.file_mtime,
+                capture_time = excluded.capture_time
+        """, (int(device_id), media_type, filename, float(file_mtime),
+              capture_time))
+        conn.commit()
+    except (ValueError, TypeError):
+        pass
+    finally:
+        conn.close()
+
+
+def upsert_photo_metadata_batch(rows):
+    """Insert or refresh many photo metadata rows in ONE transaction.
+
+    ``rows`` is an iterable of ``(device_id, media_type, filename,
+    file_mtime, capture_time)`` tuples. A cold photo-heavy device can have
+    hundreds of new/changed files in a single admin grid request; routing
+    each through ``upsert_photo_metadata`` would open a fresh connection
+    and fsync a separate commit per row (hundreds of fsyncs on an SD card).
+    This opens one connection and issues a single ``executemany`` + commit.
+    Non-numeric device_ids are skipped (mirrors the single-row helper);
+    if every row is unusable the function is a no-op."""
+    prepared = []
+    for device_id, media_type, filename, file_mtime, capture_time in rows:
+        try:
+            prepared.append((int(device_id), media_type, filename,
+                             float(file_mtime), capture_time))
+        except (ValueError, TypeError):
+            continue
+    if not prepared:
+        return
+    conn = get_connection()
+    try:
+        conn.executemany("""
+            INSERT INTO photo_metadata
+                (device_id, media_type, filename, file_mtime, capture_time)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(device_id, media_type, filename) DO UPDATE SET
+                file_mtime = excluded.file_mtime,
+                capture_time = excluded.capture_time
+        """, prepared)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_photo_metadata(device_id, media_type, filename):
+    """Drop one photo's cached metadata row (on delMedia removal)."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "DELETE FROM photo_metadata WHERE device_id = ? "
+            "AND media_type = ? AND filename = ?",
+            (int(device_id), media_type, filename))
+        conn.commit()
+    except (ValueError, TypeError):
+        pass
+    finally:
+        conn.close()
+
+
+def delete_photo_metadata_for_device(device_id):
+    """Drop every photo_metadata row for a device (both media types).
+    Called by unbindUser cleanup."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "DELETE FROM photo_metadata WHERE device_id = ?",
+            (int(device_id),))
+        conn.commit()
+    except (ValueError, TypeError):
+        pass
     finally:
         conn.close()

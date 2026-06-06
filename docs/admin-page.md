@@ -4,30 +4,45 @@ The API server includes a web-based admin page at `/admin` for controlling the c
 
 **This panel is a local-only addition. It is not part of the original iFramix Pro.**
 
-The page has two sections:
+The page is a master-detail layout: a sidebar on the left lists the **Chargers** view and all your **display devices**, and the panel on the right shows whichever one you selected. 
+
+The device list is searchable and every device shows an online/offline dot (online = the device talked to the server within the last 5 minutes). 
+The online indicators refresh in the background every 10 seconds like the chargers table. 
+Clicking the **Live · 10s** pill in the top right pauses the background refresh (the green dot disappears and the labels switch to "Paused"); clicking it again resumes and immediately catches up. 
+On phones and small windows, the sidebar collapses (as a "hamburger" menu).
 
 ## Chargers
 
-Table with all your chargers, showing MAC, WiFi name, firmware, voltage, current, battery percentage, and three charging columns:
+Table with all your chargers, showing MAC, WiFi name, firmware, voltage, current, battery percentage, and two charging columns:
 
-- **Charge command**: the desired on/off state last sent by the controller app or the admin page's Enable/Disable button.
-- **Charger status**: the actual state. This is either the state the charger explicitly reports over MQTT, or, when firmware omits that field, inferred from the charger's measured current.
-- **Mode**: each charger can be switched between **manual** (default) and **auto** mode.
-  - In manual mode, the charger only reacts to the Enable/Disable buttons on the Admin panel. The controller app's requests update the stored desired state but do not drive the charger.
-  - In auto mode, the Enable/Disable buttons are hidden and every request from the controller app is forwarded to the charger as an MQTT `charging_switch` command, which drives the charger to power on / off.
+- **Charge cmd**: the desired on/off state last sent by the controller app.
+- **Status**: the actual state. This is either the state the charger explicitly reports over MQTT, or, when firmware omits that field, inferred from the charger's measured current.
+
+Each row also has:
+
+- **Mode**: an Auto/Manual toggle per charger (default: manual).
+  - In manual mode, the charger only reacts to the **Power on / Power off** button on the admin page. The controller app's requests update the stored desired state but do not drive the charger.
+  - In auto mode, the Power button is disabled ("Controlled by app") and every request from the controller app is forwarded to the charger as an MQTT `charging_switch` command, which drives the charger to power on / off.
   - Switching a charger into auto also immediately pushes the current desired state (if any).
+- **Power output**: a single button (manual mode only) that toggles the charger's power output. A "pending" badge appears in the Status column when the charger's reported status has not yet caught up with your last Power click.
 
-The chargers table refreshes in the background every 10 seconds.
+The chargers table refreshes in the background every 10 seconds; a voltage/current cell flashes briefly only when its value changed since the previous refresh.
 
-## Display Devices
+## Display devices
 
-All your display devices, collapsed by default. Expanding a device reveals forms that allow you to configure your device:
+Contains all your display devices.
 
-- **Upload photos**: multi-file picker to upload photos. Below the picker, a thumbnail grid per type (normal / AI) shows what is currently stored for that device. To stay fast on devices with hundreds of photos, the grid loads photos in pages (24 at a time, newest first) behind a **Load more** button, and the thumbnails are downscaled and cached on the server, so a card opens quickly without downloading every full-resolution image. Clicking an AI thumbnail opens a template-picker modal where you can specify the style (template) for the photo. Each thumbnail has a checkbox in its corner: tick one or more photos and use the **Delete selected** button below that grid to remove them in bulk (after a confirmation prompt). Deletion uses the same flow as removing photos from the display app, so the display refreshes automatically.
-- **Flip clock**: pick one of the 5 flip-clock styles iFramix Pro 2.2.29 introduced and the 12-hour / 24-hour format (the `time` field).
-- **Weather**: search and specify your city, select between Imperial / Metric units and select one of the 4 weather-station styles iFramix Pro 2.2.29 introduced.
-- **Calendars**: link an external calendar (Google / Outlook / iCloud iCal URL, or a manual iCal URL) or delete a previously synced one.
-- **Delete display device**: When clicked, asks for confirmation. If you delete a device, all its associated data, including photos, will be deleted from the server.
+Selecting a device in the sidebar opens its settings (five tabs):
+
+- **Photos**: A gallery for all your photos with an **All / Normal / AI** filter. Choose the type of photos (Normal or AI), then drag photos onto the dropzone (or click it to browse). Uploads start immediately. The **Sort** dropdown offers **File name** (newest first), **Upload date** (newest file modification time first), and **Capture date (EXIF)** (newest EXIF capture date first, with photos that have no readable capture date sorted last).
+- Clicking a normal photo opens a full-size preview
+- Clicking an **AI** photo opens the **AI display template** picker — a modal with a large live preview that renders your actual photo in the selected layout, next to a named list of every template the display can render (10 styles on 4:3 displays, 5 on 16:9 displays for horizontal photos, 4 for vertical photos). 
+- Each AI thumbnail shows a chip with its current template. 
+- Every thumbnail has a check button in its corner: tick one or more photos and use **Delete selected** to remove them in bulk (after a confirmation prompt).
+- **Flip clock**: pick the 12-hour / 24-hour format and one of the 5 flip-clock styles iFramix Pro 2.2.29 introduced.
+- **Weather**: search and select your city, choose °C / °F, and pick one of the 4 weather-station styles iFramix Pro 2.2.29 introduced.
+- **Calendars**: link an external calendar (Google / Apple iCloud / Outlook, or any iCal URL) or delete a previously linked one.
+- **Remove**: deletes the display device after confirmation. If you delete a device, all its associated data, including photos, will be deleted from the server.
 
 ## Unsupported features
 

@@ -8,7 +8,11 @@ No firmware changes are needed. We simply tell your network "when devices ask fo
 
 <img src="./docs/iframix-local.jpg" alt="iFramix Local" width="600px"/>
 <br />
-<img src="./docs/iframix-local-admin.jpg" alt="iFramix Local - Admin Page" width="600px"/>
+<img src="./docs/iframix-local-admin-photos.png" alt="iFramix Local - Admin Page - Photos" width="300px"/>
+<img src="./docs/iframix-local-admin-clock.png" alt="iFramix Local - Admin Page - Photos" width="300px"/>
+<br />
+<img src="./docs/iframix-local-admin-weather.png" alt="iFramix Local - Admin Page" width="300px"/>
+<img src="./docs/iframix-local-admin.png" alt="iFramix Local - Admin Page" width="300px"/>
 
 ## Will this work for me?
 

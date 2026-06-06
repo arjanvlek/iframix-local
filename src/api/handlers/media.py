@@ -20,11 +20,13 @@ from PIL import Image, ImageOps
 
 from src.api import config
 from src.api.persistence import (
-    load_media_settings, load_sessions, save_media_settings,
+    delete_photo_metadata, load_media_settings, load_photo_metadata,
+    load_sessions, save_media_settings, upsert_photo_metadata_batch,
 )
 from src.api.utils import (
-    generate_msg_id, generate_upload_token, get_exif_metadata,
-    get_image_size, scan_photos,
+    exif_datetime_to_timestamp, generate_msg_id, generate_upload_token,
+    get_exif_datetime_original, get_exif_metadata, get_image_size,
+    scan_photos,
 )
 
 logger = logging.getLogger(__name__)
@@ -224,6 +226,103 @@ def build_ai_remark(filename, filepath):
     desc = " \u00b7 ".join(parts) if parts else os.path.splitext(filename)[0]
 
     return json.dumps({"title": title, "desc": desc})
+
+
+_ADMIN_PHOTO_SORTS = ("default", "upload", "capture")
+
+
+def _scandir_photos(directory):
+    """Return ``[(filename, filepath, mtime)]`` from a single os.scandir
+    pass, filtered to image files. ``DirEntry.stat()`` reuses the dirent's
+    cached metadata on most platforms, so this is one directory walk with
+    no extra per-file getmtime() syscall (vs. scan_photos + per-file
+    os.path.getmtime). Sorted ascending by filename to match scan_photos.
+    """
+    if not os.path.isdir(directory):
+        return []
+    out = []
+    try:
+        with os.scandir(directory) as it:
+            for entry in it:
+                ext = os.path.splitext(entry.name)[1].lower()
+                if ext not in config.IMAGE_EXTENSIONS:
+                    continue
+                try:
+                    mtime = entry.stat().st_mtime
+                except OSError:
+                    mtime = 0.0
+                out.append((entry.name, entry.path, mtime))
+    except OSError:
+        return []
+    out.sort(key=lambda e: e[0])
+    return out
+
+
+def _sorted_admin_photos(device_id, media_type, sort):
+    """Return the device's photos as a list of (filename, filepath),
+    ordered for the admin grid per ``sort``:
+
+      - "default": newest filename first (original behaviour).
+      - "upload":  newest file mtime first.
+      - "capture": newest EXIF capture date first; photos without a
+                   readable capture date sort last (newest mtime first
+                   among themselves).
+
+    For "upload"/"capture" each photo's mtime and EXIF capture time are
+    cached in the photo_metadata table, so only new or modified files are
+    stat-ed / EXIF-read on a given request (mirrors the thumbnail cache).
+    """
+    base_dir = (config.PHOTOS_AI_DIR if media_type == "ai"
+                else config.PHOTOS_DIR)
+    directory = os.path.join(base_dir, str(device_id))
+
+    if sort not in ("upload", "capture"):
+        # default: newest filename first
+        return list(reversed(scan_photos(directory)))
+
+    # Walk the directory once, harvesting the mtime from the dirent's
+    # cached stat instead of a separate os.path.getmtime() syscall per
+    # file (the previous scan_photos + per-file getmtime did two passes /
+    # N extra stats). On a warm cache this is the only per-file work.
+    photos = _scandir_photos(directory)  # [(filename, filepath, mtime)]
+
+    cached = load_photo_metadata(device_id, media_type)
+    entries = []  # (filename, filepath, mtime, capture_time)
+    # Accumulate new/changed rows and flush them in ONE batched transaction
+    # after the loop. A cold device with hundreds of photos would otherwise
+    # open one connection and fsync one commit per file.
+    to_upsert = []
+    for filename, filepath, mtime in photos:
+        row = cached.get(filename)
+        if row is None or abs(row["file_mtime"] - mtime) > 1e-6:
+            capture = exif_datetime_to_timestamp(
+                get_exif_datetime_original(filepath))
+            to_upsert.append(
+                (device_id, media_type, filename, mtime, capture))
+        else:
+            capture = row["capture_time"]
+        entries.append((filename, filepath, mtime, capture))
+
+    if to_upsert:
+        upsert_photo_metadata_batch(to_upsert)
+
+    if sort == "upload":
+        entries.sort(key=lambda e: (e[2], e[0]), reverse=True)
+    else:  # capture
+        # Group flag (1 = has capture date) forces no-EXIF photos last
+        # under reverse=True. Within the captured group the key's 2nd
+        # element is an int capture_time; within the non-captured group
+        # it is the float mtime fallback -- the two are never compared
+        # across groups because the flag differs first.
+        entries.sort(
+            key=lambda e: (
+                1 if e[3] is not None else 0,
+                e[3] if e[3] is not None else e[2],
+                e[0],
+            ),
+            reverse=True,
+        )
+    return [(fn, fp) for (fn, fp, _m, _c) in entries]
 
 
 class MediaMixin:
@@ -516,13 +615,12 @@ class MediaMixin:
             page_size = 24
         page_size = max(1, min(page_size, 200))
 
-        base_dir = (config.PHOTOS_AI_DIR if media_type == "ai"
-                    else config.PHOTOS_DIR)
         url_prefix = "/photos_with_ai" if media_type == "ai" else "/photos"
 
-        directory = os.path.join(base_dir, str(device_id))
-        # Newest first so page 1 shows the most recently uploaded photos.
-        photos = list(reversed(scan_photos(directory)))
+        sort = params.get("sort", ["default"])[0]
+        if sort not in _ADMIN_PHOTO_SORTS:
+            sort = "default"
+        photos = _sorted_admin_photos(device_id, media_type, sort)
         total = len(photos)
         start = (page - 1) * page_size
         page_items = photos[start:start + page_size]
@@ -562,14 +660,15 @@ class MediaMixin:
             save_media_settings(media_settings)
 
         logger.info(
-            "[ADMIN PHOTOS] device=%s type=%s page=%d/%d -> %d of %d",
-            device_id, media_type, page,
+            "[ADMIN PHOTOS] device=%s type=%s sort=%s page=%d/%d -> %d of %d",
+            device_id, media_type, sort, page,
             (total + page_size - 1) // page_size if total else 1,
             len(records), total)
         self.respond_success({
             "page": page,
             "page_size": page_size,
             "total": total,
+            "sort": sort,
             "list": records,
         })
 
@@ -919,6 +1018,10 @@ class MediaMixin:
                             os.remove(thumb)
                         except OSError:
                             pass
+                        # Drop the cached metadata row too so the
+                        # upload/capture sort doesn't keep ranking a
+                        # photo that no longer exists.
+                        delete_photo_metadata(device_id, media_type, filename)
                         deleted.append(filename)
                         deleted_ids.append(mid)
             logger.info(

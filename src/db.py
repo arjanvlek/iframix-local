@@ -20,7 +20,7 @@ import threading
 _db_path = None
 _db_path_lock = threading.Lock()
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 10
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -42,6 +42,13 @@ CREATE TABLE IF NOT EXISTS devices (
     -- NULL if the firmware never includes it in set_info/set_config.
     charging_switch INTEGER,
     charging_switch_reported INTEGER,
+    -- `admin_switch` = the last on/off command the admin page's Power
+    -- button sent (1=on, 0=off). NULL means the admin never clicked it.
+    -- Kept separate from `charging_switch` (the controller app's wish)
+    -- because in manual mode only the admin button drives the charger,
+    -- so "pending" must compare admin_switch (not the app's wish)
+    -- against charging_switch_reported.
+    admin_switch INTEGER,
     polling INTEGER,
     cloud_id INTEGER,
     last_seen REAL,
@@ -70,6 +77,11 @@ CREATE TABLE IF NOT EXISTS sessions (
     bind_at INTEGER,
     created_at TEXT,
     last_login INTEGER,
+    -- `last_active` = the most recent timestamp at which any API request or
+    -- MQTT-over-WebSocket traffic could be attributed to this device.
+    -- Updated asynchronously so it tracks live presence even when the device
+    -- never re-runs the login flow (which only ever bumps last_login).
+    last_active INTEGER DEFAULT 0,
     last_disconnected_at INTEGER DEFAULT 0,
     icharger_mac TEXT DEFAULT '',
     screensaver_json TEXT DEFAULT '[]',
@@ -135,6 +147,18 @@ CREATE TABLE IF NOT EXISTS ai_albums (
     device_id INTEGER PRIMARY KEY,
     albums_json TEXT NOT NULL DEFAULT '[]'
 );
+
+CREATE TABLE IF NOT EXISTS photo_metadata (
+    device_id INTEGER NOT NULL,
+    media_type TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    file_mtime REAL NOT NULL,
+    capture_time INTEGER,
+    PRIMARY KEY (device_id, media_type, filename)
+);
+
+CREATE INDEX IF NOT EXISTS idx_photo_meta_lookup
+    ON photo_metadata(device_id, media_type);
 """
 
 
@@ -169,6 +193,12 @@ def get_connection():
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA busy_timeout=5000")
+    # NORMAL is the safe-and-fast pairing for WAL: it only fsyncs the WAL at
+    # checkpoint time (not on every commit), which removes a per-commit fsync
+    # on slow storage (e.g. a Raspberry Pi SD card). Durability under WAL is
+    # unchanged across application crashes; the only window is a power loss
+    # right at a checkpoint, acceptable for this controller's state.
+    conn.execute("PRAGMA synchronous=NORMAL")
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -215,6 +245,34 @@ def _run_migrations(conn, from_version):
             conn.execute(
                 "ALTER TABLE device_weather_config ADD COLUMN "
                 "weather_template_id INTEGER NOT NULL DEFAULT 0")
+    if from_version < 8:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS photo_metadata (
+                device_id INTEGER NOT NULL,
+                media_type TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                file_mtime REAL NOT NULL,
+                capture_time INTEGER,
+                PRIMARY KEY (device_id, media_type, filename)
+            )
+        """)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_photo_meta_lookup "
+            "ON photo_metadata(device_id, media_type)")
+    if from_version < 9:
+        # Track live per-device presence independently of the login flow.
+        if not _column_exists(conn, "sessions", "last_active"):
+            conn.execute(
+                "ALTER TABLE sessions ADD COLUMN "
+                "last_active INTEGER DEFAULT 0")
+    if from_version < 10:
+        # Track the admin page's Power-button clicks in their own column
+        # so manual-mode "pending" means exactly "the admin clicked
+        # on/off and the charger hasn't echoed that state yet" rather
+        # than comparing against the app's (non-driving) wish.
+        if not _column_exists(conn, "devices", "admin_switch"):
+            conn.execute(
+                "ALTER TABLE devices ADD COLUMN admin_switch INTEGER")
 
 
 def init_db(path=None):

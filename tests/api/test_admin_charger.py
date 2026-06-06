@@ -9,15 +9,16 @@ from tests.helpers import login, get_device_id, seed_auto_charger
 
 class TestAdminToggle:
     """POST /admin/toggle publishes a charging_switch MQTT command AND
-    records the user's intent in the desired-state column so the admin
-    page's Charge command cell updates immediately."""
+    records the admin's click in the admin_switch column so the admin
+    page's Power button / pending badge update immediately. The app's
+    Charge command column (charging_switch) is left untouched."""
 
     def _seed_charger(self, api_server, uuid="dev-admin", mac="BE:EF:00:00"):
         from src.api.persistence import insert_device_if_missing
         insert_device_if_missing(uuid, mac=mac, last_seen=time.time())
         return uuid
 
-    def test_toggle_updates_desired_column_on(self, api_server):
+    def test_toggle_updates_admin_switch_on(self, api_server):
         from src.api.persistence import load_devices
         uuid = self._seed_charger(api_server)
 
@@ -26,9 +27,9 @@ class TestAdminToggle:
             json={"uuid": uuid, "charging_on": True},
         )
         assert resp.status_code == 200
-        assert load_devices()[uuid]["charging_switch"] == 1
+        assert load_devices()[uuid]["admin_switch"] == 1
 
-    def test_toggle_updates_desired_column_off(self, api_server):
+    def test_toggle_updates_admin_switch_off(self, api_server):
         from src.api.persistence import load_devices
         uuid = self._seed_charger(api_server, uuid="dev-admin-off")
 
@@ -36,7 +37,7 @@ class TestAdminToggle:
             f"{api_server['url']}/admin/toggle",
             json={"uuid": uuid, "charging_on": False},
         )
-        assert load_devices()[uuid]["charging_switch"] == 0
+        assert load_devices()[uuid]["admin_switch"] == 0
 
     def test_toggle_publishes_charging_switch_mqtt_event(
             self, api_server, mqtt_collector):
@@ -88,6 +89,76 @@ class TestAdminToggle:
 
         messages = mqtt_collector.wait_for_messages(count=1, timeout=1)
         assert messages == []
+
+
+class TestAdminPendingSemantics:
+    """The chargers fragment (GET /admin/chargers) shows a "pending-note"
+    only when the *driving* command disagrees with the charger's reported
+    state. In manual mode the driving command is the admin's Power click
+    (admin_switch), NOT the controller app's wish (charging_switch)."""
+
+    def test_app_wish_mismatch_alone_is_not_pending(self, api_server):
+        """Manual charger ON (reported=1) while the app once wished OFF
+        (charging_switch=0) and the admin never clicked (admin_switch
+        NULL) must NOT show a pending badge."""
+        from src.api.persistence import (
+            insert_device_if_missing, update_device_fields,
+        )
+        uuid = "dev-pending-appwish"
+        insert_device_if_missing(
+            uuid, mac="BE:EF:0A:01", last_seen=time.time())
+        update_device_fields(
+            uuid, charging_switch=0, charging_switch_reported=1)
+
+        resp = requests.get(f"{api_server['url']}/admin/chargers")
+        assert resp.status_code == 200
+        assert "pending-note" not in resp.text
+
+    def test_admin_click_mismatch_is_pending(self, api_server):
+        """After the admin clicks Power off on a charger reporting ON,
+        the fragment shows pending and the button offers Power on."""
+        from src.api.persistence import (
+            insert_device_if_missing, update_device_fields,
+        )
+        uuid = "dev-pending-adminclick"
+        insert_device_if_missing(
+            uuid, mac="BE:EF:0A:02", last_seen=time.time())
+        update_device_fields(
+            uuid, charging_switch=0, charging_switch_reported=1)
+
+        resp = requests.post(
+            f"{api_server['url']}/admin/toggle",
+            json={"uuid": uuid, "charging_on": False},
+        )
+        assert resp.status_code == 200
+
+        resp = requests.get(f"{api_server['url']}/admin/chargers")
+        assert resp.status_code == 200
+        # Only inspect this charger's row.
+        marker = f'data-uuid="{uuid}"'
+        start = resp.text.index(marker)
+        end = resp.text.index("</tr>", start)
+        row = resp.text[start:end]
+        assert "pending-note" in row
+        assert "Power on" in row
+
+    def test_set_mode_resets_admin_switch(self, api_server):
+        """Flipping mode clears any stale admin click so it can't drive
+        the button label / pending after the switch."""
+        from src.api.persistence import (
+            insert_device_if_missing, update_device_fields, load_devices,
+        )
+        uuid = "dev-pending-modereset"
+        insert_device_if_missing(
+            uuid, mac="BE:EF:0A:03", last_seen=time.time())
+        update_device_fields(uuid, admin_switch=1)
+
+        resp = requests.post(
+            f"{api_server['url']}/admin/set-mode",
+            json={"uuid": uuid, "mode": "auto"},
+        )
+        assert resp.status_code == 200
+        assert load_devices()[uuid]["admin_switch"] is None
 
 
 class TestChargerMode:

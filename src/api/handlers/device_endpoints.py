@@ -12,8 +12,8 @@ from src.api import config
 from src.api.persistence import (
     delete_ai_albums_for_device, delete_bindings_for_device,
     delete_calendar_events_by_schedule_ids, delete_calendars_for_device,
-    delete_media_settings_for_device, delete_session,
-    delete_weather_config_for_device,
+    delete_media_settings_for_device, delete_photo_metadata_for_device,
+    delete_session, delete_weather_config_for_device,
     load_bindings, load_charger_readings, load_devices, load_sessions,
     save_bindings, save_devices, save_sessions,
     update_device_fields, insert_device_if_missing,
@@ -122,6 +122,7 @@ class DeviceEndpointsMixin:
         delete_ai_albums_for_device(device_id)
         delete_media_settings_for_device(device_id)
         delete_weather_config_for_device(device_id)
+        delete_photo_metadata_for_device(device_id)
 
         _remove_device_directories(removed_uuid, device_id)
 

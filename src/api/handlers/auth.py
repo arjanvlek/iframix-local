@@ -55,6 +55,7 @@ class AuthMixin:
         if header_device_uuid and header_device_uuid in sessions:
             session = sessions[header_device_uuid]
             session["last_login"] = now
+            session["last_active"] = now
             session["user"] = username
             # Update charger binding from UA if not already set
             if not session.get("icharger_mac") and ua_icharger_mac:
@@ -107,6 +108,7 @@ class AuthMixin:
                 "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "icharger_mac": ua_icharger_mac or "",
                 "last_login": now,
+                "last_active": now,
             }
             sessions[device_uuid] = session
             save_sessions(sessions)

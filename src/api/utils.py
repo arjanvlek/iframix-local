@@ -186,6 +186,22 @@ def get_exif_datetime_original(filepath):
     return get_exif_metadata(filepath).get("datetime")
 
 
+def exif_datetime_to_timestamp(dt_str):
+    """Parse an EXIF datetime string ("YYYY:MM:DD HH:MM:SS") into a unix
+    timestamp (interpreted as local time, matching how the AI caption
+    renders capture time). Returns None for empty/None/malformed input.
+    Used to sort the admin photo grid by capture date."""
+    if not dt_str or not isinstance(dt_str, str):
+        return None
+    s = dt_str.rstrip("\x00 ")
+    for fmt, ln in (("%Y:%m:%d %H:%M:%S", 19), ("%Y:%m:%d %H:%M", 16)):
+        try:
+            return int(time.mktime(time.strptime(s[:ln], fmt)))
+        except (ValueError, OverflowError):
+            continue
+    return None
+
+
 def scan_photos(directory):
     """Scan a directory for image files, return sorted list of (filename, path)."""
     if not os.path.isdir(directory):
