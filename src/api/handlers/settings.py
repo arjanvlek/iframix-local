@@ -124,15 +124,7 @@ class SettingsMixin:
         sessions = load_sessions()
         for sess in sessions.values():
             if sess.get("id") == device_id:
-                settings = sess.get("screensaver", [])
-                no = values.get("no")
-                # Update existing entry or append new one
-                for entry in settings:
-                    if entry.get("no") == no:
-                        entry.update(values)
-                        break
-                else:
-                    settings.append(values)
+                settings = [values]
                 sess["screensaver"] = settings
                 target_uuid = sess["uuid"]
                 save_sessions(sessions)
