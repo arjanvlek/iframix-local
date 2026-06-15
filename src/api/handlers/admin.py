@@ -24,9 +24,9 @@ Claude Design handoff bundle "iframix-admin"):
   driving command: ``admin_switch`` vs reported in manual mode, the
   app's ``charging_switch`` vs reported in auto mode.
 * Each display device gets a tabbed detail panel (Photos / Flip clock /
-  Weather / Calendars / Remove) wired to the same REST endpoints that
-  the native controller app uses, so the side-effects (MQTT
-  notifications to the display device) are identical.
+  Weather / Playback / Calendars / Remove) wired to the same REST
+  endpoints that the native controller app uses, so the side-effects
+  (MQTT notifications to the display device) are identical.
 
 Static assets (clock/weather style screenshots, bundled woff2 fonts)
 are served from ``admin_assets/static/`` at ``/admin/assets/...``.
@@ -79,6 +79,16 @@ _WEATHER_STYLES = [
     (1, "High Contrast", "weather/02-high-contrast.png"),
     (2, "Soft Toned", "weather/03-soft-toned.png"),
     (3, "Weather Station", "weather/04-weather-station.png"),
+]
+# Playback modules exactly as iFramix Pro 2.3.1 posts them, with the
+# labels the native app shows (album = Photos, album_ai = AI Photos,
+# screensaver = Flip Clock, weather = Weather, calendar = Calendar).
+_PLAYBACK_MODULES = [
+    ("album", "Photos"),
+    ("album_ai", "AI Photos"),
+    ("screensaver", "Flip Clock"),
+    ("weather", "Weather"),
+    ("calendar", "Calendar"),
 ]
 
 
@@ -137,6 +147,7 @@ _ICON_PATHS = {
     "sparkle": ('<path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5'
                 'M15.5 15.5 18 18M18 6l-2.5 2.5M8.5 15.5 6 18"/>'),
     "power": '<path d="M12 4v8"/><path d="M7 6a8 8 0 1 0 10 0"/>',
+    "play": '<polygon points="6 3 20 12 6 21 6 3"/>',
     "alert": ('<path d="M12 9v4M12 17h.01"/>'
               '<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17'
               'a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/>'),
@@ -187,6 +198,31 @@ def _is_online(session):
     last_seen = max(session.get("last_login") or 0,
                     session.get("last_active") or 0)
     return (time.time() - last_seen) < _ONLINE_WINDOW_SECONDS
+
+
+def _playback_module_switches():
+    """Render one labelled toggle switch per playback module."""
+    rows = ""
+    for value, label in _PLAYBACK_MODULES:
+        rows += f"""
+                        <label class="module-row" data-module="{value}">
+                            <span class="module-name">{label}</span>
+                            <span class="switch">
+                                <input type="checkbox" checked>
+                                <span class="track"><span class="knob">
+                                </span></span>
+                            </span>
+                        </label>"""
+    return rows
+
+
+def _playback_module_select(css_class, empty_label=None):
+    """Render a module ``<select>``, optionally with an empty first option."""
+    options = (f'<option value="">{empty_label}</option>'
+               if empty_label else "")
+    for value, label in _PLAYBACK_MODULES:
+        options += f'<option value="{value}">{label}</option>'
+    return f'<select class="input {css_class}">{options}</select>'
 
 
 def _style_tiles(styles, grid_name):
@@ -461,6 +497,8 @@ class AdminMixin:
                     <button class="tab" type="button"
                             data-tab="calendars">{_icon('calendar', 16)}Calendars
                         <span class="tcount"></span></button>
+                    <button class="tab" type="button"
+                            data-tab="playback">{_icon('play', 16)}Playback</button>
                     <button class="tab remove-tab" type="button"
                             data-tab="remove">{_icon('alert', 15)}Remove</button>
                 </div>
@@ -606,6 +644,99 @@ class AdminMixin:
                         </div>
                     </div>
                     <div class="cal-list"></div>
+                </div>
+
+                <div class="tab-panel" data-panel="playback">
+                    <label class="field-label">Playback mode</label>
+                    <div class="seg accent" data-seg="playback-mode">
+                        <button type="button" data-value="random"
+                                aria-pressed="true">Random</button>
+                        <button type="button" data-value="fixed"
+                                aria-pressed="false">Fixed</button>
+                    </div>
+                    <p class="hint">Playback automatically switches the
+                        display between modules. Random mode shows a new
+                        random module on an interval; fixed mode shows a
+                        default module with daily time-rule overrides.</p>
+
+                    <div class="playback-random">
+                        <div class="field-block">
+                            <label class="field-label">Switch
+                                interval</label>
+                            <div class="row" style="max-width:260px;">
+                                <input type="number" class="input
+                                    playback-interval" min="1" max="240"
+                                    step="1" value="15">
+                                <span class="unit-suffix">min</span>
+                            </div>
+                            <p class="hint">Between 1 and 240 minutes.</p>
+                        </div>
+                        <div class="field-block">
+                            <label class="field-label">Random playback
+                                modules <span class="opt module-count">
+                                </span></label>
+                            <div class="module-list">
+                                {_playback_module_switches()}
+                            </div>
+                            <p class="hint">On = included in random
+                                playback; off = excluded from random
+                                switching.</p>
+                        </div>
+                    </div>
+
+                    <div class="playback-fixed" hidden>
+                        <div class="field-block" style="max-width:320px;">
+                            <label class="field-label">Default
+                                module</label>
+                            {_playback_module_select(
+                                'playback-default', 'Not set')}
+                            <p class="hint">Shown whenever no time rule
+                                matches the current time.</p>
+                        </div>
+                        <div class="field-block">
+                            <label class="field-label">Time rules
+                                <span class="opt">(repeat daily)</span>
+                            </label>
+                            <div class="rule-list"></div>
+                            <div class="rule-form">
+                                <div>
+                                    <label class="field-label">Start
+                                        time</label>
+                                    <input type="time" class="input
+                                        rule-start">
+                                </div>
+                                <div>
+                                    <label class="field-label">End
+                                        time</label>
+                                    <input type="time" class="input
+                                        rule-end">
+                                </div>
+                                <div>
+                                    <label class="field-label">Module</label>
+                                    {_playback_module_select('rule-module')}
+                                </div>
+                                <div class="rule-form-actions">
+                                    <button class="btn rule-cancel-btn"
+                                            type="button" hidden>
+                                        Cancel</button>
+                                    <button class="btn primary rule-add-btn"
+                                            type="button">
+                                        {_icon('plus', 15)}<span
+                                            class="rule-add-label">Add
+                                            rule</span></button>
+                                </div>
+                            </div>
+                            <p class="hint">Rules take effect daily and
+                                cannot overlap. Outside every rule the
+                                default module is shown.</p>
+                        </div>
+                    </div>
+
+                    <div class="save-row">
+                        <button class="btn primary playback-save"
+                                type="button">
+                            {_icon('check', 15)}Save playback</button>
+                    </div>
                 </div>
 
                 <div class="tab-panel" data-panel="remove">

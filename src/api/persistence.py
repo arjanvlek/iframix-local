@@ -167,6 +167,11 @@ def _row_to_session(row):
         "icharger_mac": row["icharger_mac"],
         "screensaver": json.loads(row["screensaver_json"] or "[]"),
         "display": json.loads(row["display_json"] or "[]"),
+        # None (not {}) when the device has never saved playback
+        # settings — the GET endpoint translates that into the cloud's
+        # empty-array response.
+        "playback": (json.loads(row["playback_json"])
+                     if row["playback_json"] else None),
     }
 
 
@@ -227,8 +232,8 @@ def _insert_session(conn, sess_uuid, sess):
              width, height, user_id, user, is_ipad, is_h5,
              bind_at, created_at, last_login, last_active,
              last_disconnected_at,
-             icharger_mac, screensaver_json, display_json)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             icharger_mac, screensaver_json, display_json, playback_json)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         sess_uuid,
         sess.get("id", 0),
@@ -249,6 +254,8 @@ def _insert_session(conn, sess_uuid, sess):
         sess.get("icharger_mac", ""),
         json.dumps(sess.get("screensaver", [])),
         json.dumps(sess.get("display", [])),
+        (json.dumps(sess["playback"])
+         if sess.get("playback") is not None else None),
     ))
 
 

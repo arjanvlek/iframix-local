@@ -10,7 +10,7 @@ pytest.ini               # Pytest configuration
 server.crt / server.key  # Self-signed TLS cert + key for the API server (gitignored in practice)
 src/
   __init__.py
-  db.py                  # SQLite connection helper + schema migrations (v1..v7)
+  db.py                  # SQLite connection helper + schema migrations (v1..v11)
   logging_setup.py       # Stdlib logging configuration shared by both entry points
   router/                # MQTT router implementation
     __init__.py

@@ -32,7 +32,7 @@ The chargers table refreshes in the background every 10 seconds; a voltage/curre
 
 Contains all your display devices.
 
-Selecting a device in the sidebar opens its settings (five tabs):
+Selecting a device in the sidebar opens its settings (six tabs):
 
 - **Photos**: A gallery for all your photos with an **All / Normal / AI** filter. Choose the type of photos (Normal or AI), then drag photos onto the dropzone (or click it to browse). Uploads start immediately. The **Sort** dropdown offers **File name** (newest first), **Upload date** (newest file modification time first), and **Capture date (EXIF)** (newest EXIF capture date first, with photos that have no readable capture date sorted last).
 - Clicking a normal photo opens a full-size preview
@@ -42,6 +42,7 @@ Selecting a device in the sidebar opens its settings (five tabs):
 - **Flip clock**: pick the 12-hour / 24-hour format and one of the 5 flip-clock styles iFramix Pro 2.2.29 introduced.
 - **Weather**: search and select your city, choose °C / °F, and pick one of the 4 weather-station styles iFramix Pro 2.2.29 introduced.
 - **Calendars**: link an external calendar (Google / Apple iCloud / Outlook, or any iCal URL) or delete a previously linked one.
+- **Playback**: configure the playback mode iFramix Pro 2.3.1 introduced, where the display automatically switches between modules (Photos, AI Photos, Flip Clock, Weather, Calendar). In **Random** mode, pick the switch interval (1–240 minutes) and toggle which modules join the rotation. In **Fixed** mode, pick a default module and optionally add daily time rules (start time, end time, module) that override it; rules repeat daily, must stay within one day, and cannot overlap. Existing rules can be edited and deleted. Changes are applied when you press **Save playback** — the display device is notified immediately over MQTT.
 - **Remove**: deletes the display device after confirmation. If you delete a device, all its associated data, including photos, will be deleted from the server.
 
 ## Unsupported features

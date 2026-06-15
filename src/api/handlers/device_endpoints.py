@@ -284,6 +284,42 @@ class DeviceEndpointsMixin:
             logger.info("[DEVICE INFO] id=%s not found", device_id)
             self.respond_json({"code": 0, "msg": "not found"}, status=404)
 
+    def handle_device_update(self, body):
+        """Refresh a display device's own session metadata (app 2.3.1+).
+
+        The 2.3.1 display app periodically posts its identity
+        (``{id, uuid, device_name, device_type, ios_version, width,
+        height}``) so the server-side record tracks renames, OS updates
+        and resolution changes without a re-login. Only the metadata
+        fields present in the body are updated; the response is a plain
+        success, matching the cloud server.
+        """
+        device_id = body.get("id")
+        try:
+            device_id = int(device_id)
+        except (ValueError, TypeError):
+            self.respond_json({"code": 0, "msg": "invalid id"}, status=400)
+            return
+
+        updatable = ("device_name", "device_type", "ios_version",
+                     "width", "height")
+        sessions = load_sessions()
+        for sess in sessions.values():
+            if sess.get("id") == device_id:
+                for field in updatable:
+                    if field in body and body[field] is not None:
+                        sess[field] = body[field]
+                save_sessions(sessions)
+                logger.info(
+                    "[DEVICE UPDATE] id=%s name=%s %sx%s",
+                    device_id, sess.get("device_name"),
+                    sess.get("width"), sess.get("height"))
+                break
+        else:
+            logger.info("[DEVICE UPDATE] id=%s not found", device_id)
+
+        self.respond_success(True)
+
     def _maybe_auto_publish(self, uuid, device_info, charging_switch):
         """Publish an MQTT charging_switch command if the charger is in auto mode.
 

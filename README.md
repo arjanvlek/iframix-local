@@ -7,12 +7,21 @@ so your pictures stay in-house and devices keep working even if the manufacturer
 No firmware changes are needed. We simply tell your network "when devices ask for the cloud server, send them to my computer instead."
 
 <img src="./docs/iframix-local.jpg" alt="iFramix Local" width="600px"/>
-<br />
-<img src="./docs/iframix-local-admin-photos.png" alt="iFramix Local - Admin Page - Photos" width="300px"/>
-<img src="./docs/iframix-local-admin-clock.png" alt="iFramix Local - Admin Page - Photos" width="300px"/>
-<br />
-<img src="./docs/iframix-local-admin-weather.png" alt="iFramix Local - Admin Page" width="300px"/>
-<img src="./docs/iframix-local-admin.png" alt="iFramix Local - Admin Page" width="300px"/>
+
+<table>
+  <tr>
+    <td><img src="./docs/iframix-local-admin-photos.png" alt="Admin – Photos" /></td>
+    <td><img src="./docs/iframix-local-admin-clock.png" alt="Admin – Flip Clock" /></td>
+  </tr>
+  <tr>
+    <td><img src="./docs/iframix-local-admin-weather.png" alt="Admin – Weather" /></td>
+    <td><img src="./docs/iframix-local-admin-playback.png" alt="Admin – Playback" /></td>
+  </tr>
+  <tr>
+    <td><img src="./docs/iframix-local-admin.png" alt="Admin – Chargers" /></td>
+    <td></td>
+  </tr>
+</table>
 
 ## Will this work for me?
 
@@ -21,7 +30,7 @@ Yes - if you are tech-savvy, use an iPad to display the pictures and use an iPho
 If you use an Android phone (e.g. Samsung) to control the picture frame, or an Android tablet to display the pictures,
 this project unfortunately **does not (yet) work for you.** Stay tuned for future updates on Android support.
 
-The project has been tested with iFramix Pro app version **2.2.29**. Download the latest version from the 
+The project has been tested with iFramix Pro app version **2.3.1**. Download the latest version from the 
 [App Store](https://apps.apple.com/us/app/iframix-pro/id6470332689) or install an older version from [Pgyer](https://pgyer.com/iframixPro).
 
 See [COMPATIBILITY.md](COMPATIBILITY.md) for which features work with which app version.

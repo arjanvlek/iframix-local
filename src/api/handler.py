@@ -189,6 +189,8 @@ class APIHandler(
             self.handle_unbind_user(body)
         elif path == "/api/ipad/device/list":
             self.handle_device_list(body)
+        elif path == "/api/ipad/device/update":
+            self.handle_device_update(body)
         elif path == "/api/ipad/icharger/unbind":
             self.handle_unbind(body)
         elif path == "/api/ipad/device/setting/screensaver":
@@ -199,6 +201,8 @@ class APIHandler(
             self.handle_weather_update(body)
         elif path == "/api/ipad/device/setting/display":
             self.handle_display_update(body)
+        elif path == "/api/ipad/device/setting/playback":
+            self.handle_playback_update(body)
         elif path == "/api/ipad/device/setting/ai_albums":
             self.handle_ai_albums_update(body)
         elif path == "/api/calendar/external/link":
@@ -302,6 +306,8 @@ class APIHandler(
             self.handle_screensaver_setting(params)
         elif path == "/api/ipad/device/setting/display":
             self.handle_display_setting(params)
+        elif path == "/api/ipad/device/setting/playback":
+            self.handle_playback_setting(params)
         elif path == "/api/ipad/device/setting/ai_albums":
             self.handle_ai_albums_setting(params)
         elif path == "/api/ipad/device/setting/address":

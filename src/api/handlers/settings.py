@@ -1,7 +1,8 @@
-"""Device settings handler methods (screensaver, display, address)."""
+"""Device settings handler methods (screensaver, display, address, playback)."""
 
 import json
 import logging
+import re
 
 import paho.mqtt.publish as mqtt_publish
 
@@ -13,6 +14,75 @@ from src.api.persistence import (
 from src.api.utils import generate_msg_id
 
 logger = logging.getLogger(__name__)
+
+# Module identifiers used by the iFramix Pro 2.3.1 playback settings,
+# exactly as the native app posts them: album = Photos, album_ai =
+# Photos + AI, screensaver = Flip Clock, weather = Weather Station,
+# calendar = Calendar.
+PLAYBACK_MODULES = ("album", "album_ai", "screensaver", "weather", "calendar")
+
+_PLAYBACK_TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+def _normalize_playback_values(values):
+    """Coerce a posted playback document into the canonical 2.3.1 shape.
+
+    The app always posts the whole settings document (both the random
+    and fixed sub-objects, regardless of the active mode), so this
+    normalises rather than validates: unknown modules are dropped,
+    the interval is clamped to the app's 1..240 minute picker range,
+    and malformed rules are skipped. The result matches the shape the
+    cloud server echoes back on GET and in the MQTT Playback event.
+    """
+    if not isinstance(values, dict):
+        values = {}
+    random_in = values.get("random") or {}
+    fixed_in = values.get("fixed") or {}
+
+    mode = values.get("mode")
+    if mode not in ("random", "fixed"):
+        mode = "random"
+
+    try:
+        interval = int(random_in.get("intervalMinutes", 15))
+    except (TypeError, ValueError):
+        interval = 15
+    interval = max(1, min(240, interval))
+
+    excluded = [m for m in (random_in.get("excludedModules") or [])
+                if m in PLAYBACK_MODULES]
+
+    default_module = fixed_in.get("defaultModule") or ""
+    if default_module not in PLAYBACK_MODULES:
+        default_module = ""
+
+    rules = []
+    for rule in (fixed_in.get("rules") or []):
+        if not isinstance(rule, dict):
+            continue
+        start = str(rule.get("startTime") or "")
+        end = str(rule.get("endTime") or "")
+        module = rule.get("module")
+        if module not in PLAYBACK_MODULES:
+            continue
+        if not (_PLAYBACK_TIME_RE.match(start)
+                and _PLAYBACK_TIME_RE.match(end)):
+            continue
+        rules.append({"startTime": start, "endTime": end, "module": module})
+
+    return {
+        "mode": mode,
+        "random": {
+            "intervalMinutes": interval,
+            "excludedModules": excluded,
+        },
+        "fixed": {
+            "defaultModule": default_module,
+            "rules": rules,
+        },
+        "isPlaying": bool(values.get("isPlaying", False)),
+        "currentModule": str(values.get("currentModule") or ""),
+    }
 
 
 class SettingsMixin:
@@ -168,6 +238,92 @@ class SettingsMixin:
                 "[DISPLAY SET] id=%s values=%s "
                 "(no matching session for MQTT)",
                 device_id, values)
+
+        self.respond_success(True)
+
+    def handle_playback_setting(self, params):
+        """Return playback-mode settings for a device (app 2.3.1+).
+
+        Mirrors the cloud server: a device that has never saved playback
+        settings gets an empty ``data`` array (the app then falls back
+        to its built-in defaults), a configured device gets the full
+        settings document back.
+        """
+        device_id = params.get("id", [None])[0]
+        try:
+            device_id = int(device_id)
+        except (ValueError, TypeError):
+            self.respond_success([])
+            return
+
+        sessions = load_sessions()
+        for sess in sessions.values():
+            if sess.get("id") == device_id:
+                playback = sess.get("playback")
+                result = playback if playback is not None else []
+                logger.info(
+                    "[PLAYBACK GET] id=%s -> %s", device_id, result)
+                self.respond_success(result)
+                return
+
+        logger.info("[PLAYBACK GET] id=%s not found", device_id)
+        self.respond_success([])
+
+    def handle_playback_update(self, body):
+        """Store playback settings and notify the display device via MQTT.
+
+        The app posts the whole settings document on every change (mode
+        switch, interval change, module exclusion, default module, rule
+        add/edit/delete), so storage is a full replace. The display
+        device is notified with an ``ipad/device/setting/Playback``
+        event carrying the same document, matching the cloud server.
+        """
+        device_id = body.get("id")
+        values = _normalize_playback_values(body.get("values"))
+
+        try:
+            device_id = int(device_id)
+        except (ValueError, TypeError):
+            self.respond_json({"code": 0, "msg": "invalid id"}, status=400)
+            return
+
+        target_uuid = None
+        sessions = load_sessions()
+        for sess in sessions.values():
+            if sess.get("id") == device_id:
+                sess["playback"] = values
+                target_uuid = sess["uuid"]
+                save_sessions(sessions)
+                break
+
+        if target_uuid:
+            msg = json.dumps({
+                "uuid": target_uuid,
+                "msg_id": generate_msg_id(),
+                "event": "ipad/device/setting/Playback",
+                "data": values,
+            })
+            try:
+                mqtt_publish.single(
+                    f"/s2c/{target_uuid}",
+                    payload=msg,
+                    qos=1,
+                    hostname=config.MQTT_BROKER_HOST,
+                    port=config.MQTT_BROKER_PORT,
+                    auth={"username": config.MQTT_USER,
+                          "password": config.MQTT_PASS},
+                )
+                logger.info(
+                    "[PLAYBACK SET] id=%s mode=%s -> notified %s",
+                    device_id, values["mode"], target_uuid)
+            except Exception:
+                logger.exception(
+                    "[PLAYBACK SET] MQTT publish to %s failed", target_uuid)
+        else:
+            logger.info(
+                "[PLAYBACK SET] id=%s mode=%s "
+                "(no matching session for MQTT)",
+                device_id, values["mode"])
 
         self.respond_success(True)
 

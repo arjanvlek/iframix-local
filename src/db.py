@@ -20,7 +20,7 @@ import threading
 _db_path = None
 _db_path_lock = threading.Lock()
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (
@@ -85,7 +85,13 @@ CREATE TABLE IF NOT EXISTS sessions (
     last_disconnected_at INTEGER DEFAULT 0,
     icharger_mac TEXT DEFAULT '',
     screensaver_json TEXT DEFAULT '[]',
-    display_json TEXT DEFAULT '[]'
+    display_json TEXT DEFAULT '[]',
+    -- `playback_json` = the iFramix Pro 2.3.1 playback-mode settings
+    -- document (mode random/fixed, switch interval, excluded modules,
+    -- default module + daily time rules). NULL until the device is
+    -- first configured — GET /api/ipad/device/setting/playback then
+    -- returns an empty data array, matching the cloud server.
+    playback_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS bindings (
@@ -273,6 +279,13 @@ def _run_migrations(conn, from_version):
         if not _column_exists(conn, "devices", "admin_switch"):
             conn.execute(
                 "ALTER TABLE devices ADD COLUMN admin_switch INTEGER")
+    if from_version < 11:
+        # iFramix Pro 2.3.1 introduced playback mode (automatic module
+        # switching on the display device); persist the per-device
+        # settings document alongside the other session-scoped settings.
+        if not _column_exists(conn, "sessions", "playback_json"):
+            conn.execute(
+                "ALTER TABLE sessions ADD COLUMN playback_json TEXT")
 
 
 def init_db(path=None):
