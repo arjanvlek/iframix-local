@@ -30,7 +30,7 @@ Yes - if you are tech-savvy, use an iPad to display the pictures and use an iPho
 If you use an Android phone (e.g. Samsung) to control the picture frame, or an Android tablet to display the pictures,
 this project unfortunately **does not (yet) work for you.** Stay tuned for future updates on Android support.
 
-The project has been tested with iFramix Pro app version **2.3.1**. Download the latest version from the 
+The project has been tested with iFramix Pro app version **2.3.2**. Download the latest version from the 
 [App Store](https://apps.apple.com/us/app/iframix-pro/id6470332689) or install an older version from [Pgyer](https://pgyer.com/iframixPro).
 
 See [COMPATIBILITY.md](COMPATIBILITY.md) for which features work with which app version.

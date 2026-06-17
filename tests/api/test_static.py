@@ -50,8 +50,8 @@ class TestPackageProject:
         assert len(data["items"]) == 2
         android = data["items"][0]
         assert android["store_type"] == "android"
-        assert android["version"] == "2.3.1"
+        assert android["version"] == "2.3.2"
         ios = data["items"][1]
         assert ios["store_type"] == "ios"
-        assert ios["version"] == "2.3.1"
+        assert ios["version"] == "2.3.2"
         assert ios["store_address"].startswith("https://apps.apple.com/")
