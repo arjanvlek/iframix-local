@@ -13,7 +13,10 @@ On phones and small windows, the sidebar collapses (as a "hamburger" menu).
 
 ## Chargers
 
-Table with all your chargers, showing MAC, WiFi name, firmware, voltage, current, battery percentage, and two charging columns:
+Table with all your chargers. 
+The leftmost column shows green when the charger is active (has reported in the last 45 minutes). 
+
+Then it shows MAC, WiFi name, firmware, voltage, current, battery percentage, and two charging columns:
 
 - **Charge cmd**: the desired on/off state last sent by the controller app.
 - **Status**: the actual state. This is either the state the charger explicitly reports over MQTT, or, when firmware omits that field, inferred from the charger's measured current.
@@ -27,6 +30,8 @@ Each row also has:
 - **Power output**: a single button (manual mode only) that toggles the charger's power output. A "pending" badge appears in the Status column when the charger's reported status has not yet caught up with your last Power click.
 
 The chargers table refreshes in the background every 10 seconds; a voltage/current cell flashes briefly only when its value changed since the previous refresh.
+
+The **Chargers** item in the sidebar shows the active/total count (e.g. `3/5`).
 
 ## Display devices
 

@@ -205,13 +205,20 @@ function updateChargersSub() {
     const rows = $all("#chargers-tbody tr[data-uuid]");
     const charging = rows.filter(
         (r) => r.dataset.status === "on").length;
+    const online = rows.filter(
+        (r) => r.dataset.online === "true").length;
     const sub = document.getElementById("chargers-sub");
     if (sub) {
         sub.textContent = rows.length + " connected · " +
             charging + " charging";
     }
+    // The sidebar "Chargers" badge mirrors the display-device counter:
+    // a green dot + active (reported within 45 min) over total chargers.
     const count = document.getElementById("charger-count");
-    if (count) count.textContent = rows.length;
+    if (count) {
+        count.innerHTML = '<span class="dot online"></span>' +
+            online + "/" + rows.length;
+    }
 }
 
 /* ---- live refresh toggle ---- */

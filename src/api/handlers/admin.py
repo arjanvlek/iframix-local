@@ -65,6 +65,13 @@ _STATIC_CONTENT_TYPES = {
 # native app's device list.
 _ONLINE_WINDOW_SECONDS = 300
 
+# A charger counts as active when its last set_info report
+# (``last_seen``) arrived within the last 45 minutes. Chargers report
+# far less frequently than display devices chatter (a parked charger
+# only wakes on its polling interval), so they get a much wider window
+# than the 5-minute display-device heuristic above.
+_CHARGER_ONLINE_WINDOW_SECONDS = 45 * 60
+
 _CLOCK_STYLES = [
     (1, "Classic", "clocks/01-classic.png"),
     (2, "Red Plated", "clocks/02-red-plated.png"),
@@ -200,6 +207,14 @@ def _is_online(session):
     return (time.time() - last_seen) < _ONLINE_WINDOW_SECONDS
 
 
+def _charger_is_online(info):
+    """Active when the charger's last report (``last_seen``) is within
+    ``_CHARGER_ONLINE_WINDOW_SECONDS`` (missing value treated as 0).
+    """
+    return (time.time() - (info.get("last_seen") or 0)
+            ) < _CHARGER_ONLINE_WINDOW_SECONDS
+
+
 def _playback_module_switches():
     """Render one labelled toggle switch per playback module."""
     rows = ""
@@ -253,6 +268,17 @@ class AdminMixin:
             mac = info.get("mac", "?")
             wifi = info.get("wifi_name", "?")
             firmware = info.get("firmware", "?")
+
+            # Active when the charger reported within the last 45 minutes.
+            # The dot mirrors the display-device presence dot; rows carry
+            # data-online so the 10s refresh can recompute the menu count.
+            charger_online = _charger_is_online(info)
+            online_attr = "true" if charger_online else "false"
+            dot_cls = "online" if charger_online else "offline"
+            dot_title = ("Active" if charger_online
+                         else "Inactive — no report in over 45 minutes")
+            status_dot_cell = (
+                f'<span class="dot {dot_cls}" title="{dot_title}"></span>')
 
             battery = info.get("battery")
             try:
@@ -374,7 +400,9 @@ class AdminMixin:
             # after a refresh solely when a cell's value actually changed,
             # rather than flashing every charging row on every 10s swap.
             rows += f"""
-            <tr data-uuid="{uuid}" data-status="{status_attr}">
+            <tr data-uuid="{uuid}" data-status="{status_attr}"
+                data-online="{online_attr}">
+                <td class="cell-status">{status_dot_cell}</td>
                 <td class="mono">{mac}</td>
                 <td><span class="wifi-cell mono">
                     <span class="w-ico">{_icon('wifi', 14)}</span>{wifi}
@@ -393,7 +421,7 @@ class AdminMixin:
             </tr>"""
 
         if not rows:
-            rows = ('<tr class="empty-row"><td colspan="11">'
+            rows = ('<tr class="empty-row"><td colspan="12">'
                     'No chargers registered yet</td></tr>')
         return rows
 
@@ -777,8 +805,11 @@ class AdminMixin:
         devices = load_devices()
         sessions = load_sessions()
         real_sessions = self._real_sessions(sessions)
-        charger_count = sum(
-            1 for uuid in devices if not uuid.startswith("_"))
+        chargers = [(uuid, info) for uuid, info in devices.items()
+                    if not uuid.startswith("_")]
+        charger_count = len(chargers)
+        charger_online = sum(
+            1 for _, info in chargers if _charger_is_online(info))
         online = sum(1 for s in real_sessions if _is_online(s))
 
         html_body = (
@@ -787,7 +818,8 @@ class AdminMixin:
             .replace("__ADMIN_NAV__", self._build_device_nav(sessions))
             .replace("__ADMIN_DEVICE_VIEWS__",
                      self._build_device_views(sessions))
-            .replace("__CHARGER_COUNT__", str(charger_count))
+            .replace("__CHARGER_COUNT__",
+                     f"{charger_online}/{charger_count}")
             .replace("__ONLINE_COUNT__",
                      f"{online}/{len(real_sessions)}")
         )

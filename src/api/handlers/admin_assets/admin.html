@@ -24,7 +24,7 @@
             <button class="nav-item active" type="button" data-view="chargers">
                 <span class="nav-ico"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8Z"/></svg></span>
                 Chargers
-                <span class="nav-count" id="charger-count">__CHARGER_COUNT__</span>
+                <span class="nav-count" id="charger-count"><span class="dot online"></span>__CHARGER_COUNT__</span>
             </button>
         </div>
 
@@ -73,6 +73,7 @@
                             <table class="chargers">
                                 <thead>
                                     <tr>
+                                        <th class="th-status" title="Active when the charger reported within the last 45 minutes"><span class="sr-only">Status</span></th>
                                         <th>MAC address</th>
                                         <th>Wi-Fi</th>
                                         <th>Firmware</th>

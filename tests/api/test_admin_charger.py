@@ -359,3 +359,66 @@ class TestAdminSetMode:
         )
         messages = mqtt_collector.wait_for_messages(count=1, timeout=1)
         assert messages == []
+
+
+class TestChargerActivityIndicator:
+    """The chargers table marks a charger inactive once it has not
+    reported (``last_seen``) for over 45 minutes, with a green/grey dot
+    in a leading column, and the sidebar Chargers badge shows the
+    active/total count."""
+
+    def _row(self, html, uuid):
+        import re
+        m = re.search(
+            r'<tr data-uuid="' + re.escape(uuid) + r'"[^>]*>(.*?)</tr>',
+            html, re.DOTALL)
+        assert m, f"no charger row for {uuid}"
+        return m.group(0)
+
+    def test_recent_charger_is_active(self, api_server):
+        from src.api.persistence import insert_device_if_missing
+        insert_device_if_missing(
+            "dev-active", mac="AC:71:00:01", last_seen=time.time())
+        row = self._row(
+            requests.get(f"{api_server['url']}/admin/chargers").text,
+            "dev-active")
+        assert 'data-online="true"' in row
+        assert 'class="dot online"' in row
+
+    def test_stale_charger_is_inactive(self, api_server):
+        from src.api.persistence import insert_device_if_missing
+        # 46 minutes ago -> past the 45-minute window.
+        insert_device_if_missing(
+            "dev-stale", mac="AC:71:00:02",
+            last_seen=time.time() - 46 * 60)
+        row = self._row(
+            requests.get(f"{api_server['url']}/admin/chargers").text,
+            "dev-stale")
+        assert 'data-online="false"' in row
+        assert 'class="dot offline"' in row
+
+    def test_nav_badge_shows_active_over_total(self, api_server):
+        from src.api.persistence import insert_device_if_missing
+        insert_device_if_missing(
+            "dev-on", mac="AC:71:00:03", last_seen=time.time())
+        insert_device_if_missing(
+            "dev-off", mac="AC:71:00:04",
+            last_seen=time.time() - 60 * 60)
+        html = requests.get(f"{api_server['url']}/admin").text
+        import re
+        m = re.search(
+            r'id="charger-count"[^>]*>(?:<span[^>]*></span>)?\s*'
+            r'([0-9]+)/([0-9]+)', html)
+        assert m, "no charger-count badge on the page"
+        assert int(m.group(2)) == 2  # total
+        assert int(m.group(1)) == 1  # active
+
+    def test_nav_badge_carries_green_dot(self, api_server):
+        """The Chargers badge shows the same green dot the display-device
+        online counter uses."""
+        html = requests.get(f"{api_server['url']}/admin").text
+        import re
+        m = re.search(r'id="charger-count"[^>]*>(.*?)</span>\s*</button>',
+                      html, re.DOTALL)
+        # The badge's first child is the green presence dot.
+        assert m and 'class="dot online"' in m.group(1)
