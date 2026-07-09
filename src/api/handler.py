@@ -229,6 +229,8 @@ class APIHandler(
             self.handle_del_media(body)
         elif path == "/api/ipad/media/update":
             self.handle_media_update(body)
+        elif path == "/api/user/asset/compress/uploader":
+            self.handle_compress_uploader(body)
         elif path == "/api/user/log/create":
             self.handle_log_create(body)
         elif path in ("/api/user/public/logout",
@@ -369,6 +371,8 @@ class APIHandler(
         elif (path.startswith("/photos/")
               or path.startswith("/photos_with_ai/")):
             self.handle_photo_serve(path)
+        elif path.startswith("/photos_compressed/"):
+            self.handle_compressed_photo_serve(path)
         elif path.startswith("/weather_icons/"):
             self.handle_weather_icon_serve(path)
         else:

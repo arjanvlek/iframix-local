@@ -94,6 +94,84 @@ class TestMediaAndPhotos:
         assert isinstance(pagination["page"], str)
         assert isinstance(pagination["limit"], str)
 
+    def _make_photos(self, api_server, count, device_id="1"):
+        device_dir = str(api_server["tmp_path"] / "photos" / device_id)
+        os.makedirs(device_dir, exist_ok=True)
+        names = [f"photo_{i:02d}.jpg" for i in range(count)]
+        for name in names:
+            with open(os.path.join(device_dir, name), "wb") as f:
+                f.write(b"\xff\xd8\xff\xe0" + b"\x00" * 100)
+        return names
+
+    def test_media_list_pagination_slices(self, api_server):
+        """The 2.3.3 photo-manage page walks mediaList 20 per page; page and
+        limit must slice the result while totalCount stays the total."""
+        names = self._make_photos(api_server, 5)
+
+        def fetch(page, limit):
+            resp = requests.get(
+                f"{api_server['url']}/api/ipad/media/mediaList",
+                params={"device_id": 1, "page": page, "limit": limit,
+                        "type": "normal"},
+            )
+            return resp.json()["data"]
+
+        page1 = fetch(1, 2)
+        assert page1["pagination"]["totalCount"] == 5
+        assert [r["asset"]["filename"] for r in page1["list"]] == names[0:2]
+
+        page2 = fetch(2, 2)
+        assert page2["pagination"]["totalCount"] == 5
+        assert [r["asset"]["filename"] for r in page2["list"]] == names[2:4]
+
+        page3 = fetch(3, 2)
+        assert [r["asset"]["filename"] for r in page3["list"]] == names[4:5]
+
+        # Past the end: empty page, totalCount unchanged
+        page4 = fetch(4, 2)
+        assert page4["list"] == []
+        assert page4["pagination"]["totalCount"] == 5
+
+    def test_media_list_pages_are_disjoint_and_complete(self, api_server):
+        """Walking all pages yields every photo exactly once."""
+        names = self._make_photos(api_server, 7)
+        seen = []
+        for page in range(1, 5):
+            resp = requests.get(
+                f"{api_server['url']}/api/ipad/media/mediaList",
+                params={"device_id": 1, "page": page, "limit": 3,
+                        "type": "normal"},
+            )
+            seen.extend(
+                r["asset"]["filename"] for r in resp.json()["data"]["list"])
+        assert seen == names
+
+    def test_media_list_nonpositive_limit_returns_all(self, api_server):
+        """limit=-1 (and 0) return everything, like the icharger2 endpoint."""
+        self._make_photos(api_server, 4)
+        for limit in ("-1", "0"):
+            resp = requests.get(
+                f"{api_server['url']}/api/ipad/media/mediaList",
+                params={"device_id": 1, "page": 1, "limit": limit,
+                        "type": "normal"},
+            )
+            body = resp.json()["data"]
+            assert len(body["list"]) == 4
+            assert body["pagination"]["totalCount"] == 4
+
+    def test_media_list_bad_pagination_params_fall_back(self, api_server):
+        """Garbage page/limit values don't 500; defaults apply."""
+        self._make_photos(api_server, 2)
+        resp = requests.get(
+            f"{api_server['url']}/api/ipad/media/mediaList",
+            params={"device_id": 1, "page": "abc", "limit": "xyz",
+                    "type": "normal"},
+        )
+        body = resp.json()
+        assert body["code"] == 1
+        assert len(body["data"]["list"]) == 2
+        assert body["data"]["pagination"]["totalCount"] == 2
+
     def test_media_record_fields(self, api_server):
         """Each media record has all expected fields from the spec."""
         device_dir = str(api_server["tmp_path"] / "photos" / "1")

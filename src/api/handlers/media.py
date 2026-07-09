@@ -13,7 +13,7 @@ import threading
 import time
 from email.parser import BytesParser
 from email.policy import compat32
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 
 import paho.mqtt.publish as mqtt_publish
 from PIL import Image, ImageOps
@@ -82,6 +82,91 @@ def _generate_thumbnail(src_path, dst_path):
         tmp_path = dst_path + ".tmp"
         im.save(tmp_path, "JPEG", quality=THUMB_QUALITY, optimize=True)
     os.replace(tmp_path, dst_path)
+
+
+# JPEG quality for the resized variants served to display devices via the
+# 2.3.3 compress-uploader flow. Higher than the admin grid thumbnails
+# (THUMB_QUALITY) because these are shown full-screen on the display.
+COMPRESSED_QUALITY = 85
+
+
+def _compressed_variants_dir(media_type, device_id, filename):
+    """Directory holding all resized variants of one source photo.
+
+    One subdirectory per source file (named after the full source
+    filename, extension included) so ``delMedia`` can remove a photo's
+    variants with a single rmtree and photos whose names share a prefix
+    (``a.jpg`` vs ``a_1.jpg``) never collide.
+    """
+    return os.path.join(
+        config.PHOTOS_COMPRESSED_DIR, media_type, str(device_id), filename)
+
+
+def _compressed_cache_path(media_type, device_id, filename, width, height):
+    """On-disk cache path for one resized variant of one photo."""
+    return os.path.join(
+        _compressed_variants_dir(media_type, device_id, filename),
+        f"{width}x{height}.jpg")
+
+
+def _generate_compressed(src_path, dst_path, width, height):
+    """Generate a resized JPEG of ``src_path`` fitting within
+    ``width`` x ``height`` at ``dst_path``.
+
+    Same approach as ``_generate_thumbnail`` (EXIF orientation honoured,
+    JPEG DCT-scaled during decode, atomic write), just with a
+    caller-supplied bounding box and higher JPEG quality.
+    ``Image.thumbnail`` preserves aspect ratio and never upscales.
+    """
+    os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+    with Image.open(src_path) as im:
+        im.draft("RGB", (width, height))
+        im = ImageOps.exif_transpose(im)
+        im = im.convert("RGB")
+        im.thumbnail((width, height))
+        tmp_path = dst_path + ".tmp"
+        im.save(tmp_path, "JPEG", quality=COMPRESSED_QUALITY, optimize=True)
+    os.replace(tmp_path, dst_path)
+
+
+def _resolve_photo_url_to_source(file_path):
+    """Map a posted photo URL back to its on-disk source file.
+
+    ``file_path`` is whatever the app stored as the asset URL — an
+    absolute URL or a bare path pointing at ``/photos/{device_id}/{file}``
+    or ``/photos_with_ai/{device_id}/{file}`` (AI URLs may carry the
+    ``_{w}_{h}`` dimension suffix, which is stripped like in
+    ``handle_photo_serve``). Returns ``(media_type, device_id, filename,
+    src_path)`` or ``None`` when the URL does not point at an existing
+    local photo.
+    """
+    path = unquote(urlparse(str(file_path or "")).path)
+    if path.startswith("/photos_with_ai/"):
+        media_type, base_dir = "ai", config.PHOTOS_AI_DIR
+        rest = path[len("/photos_with_ai/"):]
+    elif path.startswith("/photos/"):
+        media_type, base_dir = "normal", config.PHOTOS_DIR
+        rest = path[len("/photos/"):]
+    else:
+        return None
+
+    parts = rest.split("/", 1)
+    if len(parts) == 2:
+        device_id, filename = parts
+    else:
+        device_id, filename = "0", parts[0]
+
+    safe_name = os.path.basename(filename)
+    src = os.path.join(base_dir, device_id, safe_name)
+    if not os.path.isfile(src):
+        stripped = re.sub(r"_\d+_\d+(\.\w+)$", r"\1", safe_name)
+        src = os.path.join(base_dir, device_id, stripped)
+
+    real_base = os.path.realpath(base_dir)
+    if (not os.path.realpath(src).startswith(real_base)
+            or not os.path.isfile(src)):
+        return None
+    return media_type, device_id, os.path.basename(src), src
 
 
 def _format_fnumber(f):
@@ -417,6 +502,26 @@ class MediaMixin:
 
         directory = os.path.join(base_dir, str(device_id))
         photos = scan_photos(directory)
+        total_count = len(photos)
+
+        # The app fetches this endpoint paginated: the display slideshow
+        # asks for limit=300&page=1, and the photo-manage page (app 2.3.3+)
+        # walks it 20 per page, driving its pager from
+        # ``pagination.totalCount``. Slice before building records so
+        # off-page AI photos don't pay the EXIF/remark cost on every page
+        # request. A non-positive limit returns everything (mirroring the
+        # icharger2 history endpoint's limit=-1 convention).
+        try:
+            page_num = max(1, int(page))
+        except (TypeError, ValueError):
+            page_num = 1
+        try:
+            limit_num = int(limit)
+        except (TypeError, ValueError):
+            limit_num = 300
+        if limit_num > 0:
+            start = (page_num - 1) * limit_num
+            photos = photos[start:start + limit_num]
 
         media_settings = load_media_settings()
         settings_changed = False
@@ -484,13 +589,13 @@ class MediaMixin:
             save_media_settings(media_settings)
 
         logger.info(
-            "[MEDIA LIST] device=%s type=%s -> %d photo(s)",
-            device_id, media_type, len(records))
+            "[MEDIA LIST] device=%s type=%s page=%d -> %d of %d photo(s)",
+            device_id, media_type, page_num, len(records), total_count)
         self.respond_success({
             "pagination": {
                 "page": page,
                 "limit": limit,
-                "totalCount": len(records),
+                "totalCount": total_count,
             },
             "list": records,
         })
@@ -524,6 +629,135 @@ class MediaMixin:
             file_path = os.path.join(base_dir, device_id, stripped)
 
         real_base = os.path.realpath(base_dir)
+        if not os.path.realpath(file_path).startswith(real_base):
+            self.send_error(403, "Forbidden")
+            return
+        self.respond_file(
+            file_path, cache_control="public, max-age=31536000, immutable")
+
+    def handle_compress_uploader(self, body):
+        """Generate (and cache) a resized variant of an existing photo.
+
+        ``POST /api/user/asset/compress/uploader`` — introduced by iFramix
+        Pro app 2.3.3. The display webapp posts ``{driver: "r2",
+        file_path: <original asset url>, width: <photoMaxWidth>, height:
+        <scaled>}`` when a pre-resized variant of a photo failed to load,
+        and expects back a URL for a resized copy (``data`` may be a plain
+        URL string or ``{url}``; ``code != 1`` marks failure and is
+        memoised client-side).
+
+        Against the cloud this only fires for R2-hosted photos, so the
+        local server never receives it in practice — implemented for
+        contract completeness. Variants are generated with Pillow (same
+        memory-bounding semaphore as the admin thumbnails), cached under
+        ``photos_compressed/{type}/{device_id}/{filename}/{w}x{h}.jpg``
+        and served by ``handle_compressed_photo_serve``. When no
+        downscaling would occur (no usable ``width``, or the source
+        already fits the requested box) the original URL is returned
+        unchanged rather than re-encoding the photo.
+        """
+        file_path = body.get("file_path", "")
+
+        resolved = _resolve_photo_url_to_source(file_path)
+        if resolved is None:
+            logger.info(
+                "[COMPRESS UPLOADER] no local photo for file_path=%s",
+                file_path)
+            self.respond_json({
+                "code": 0,
+                "msg": "asset not found",
+                "data": None,
+            })
+            return
+        media_type, device_id, filename, src = resolved
+
+        try:
+            width = int(body.get("width", 0))
+        except (TypeError, ValueError):
+            width = 0
+        try:
+            height = int(body.get("height", 0))
+        except (TypeError, ValueError):
+            height = 0
+        # The app omits the dimensions when it has no usable photoMaxWidth;
+        # without a target width there is nothing to compress. Height alone
+        # is not enough (the app derives it from width), so it defaults to
+        # "width-constrained only" when missing or nonsensical.
+        if width <= 0:
+            self.respond_success(str(file_path))
+            return
+        if height <= 0:
+            height = 10 ** 6
+
+        try:
+            with Image.open(src) as im:
+                src_w, src_h = im.size
+        except Exception:
+            logger.exception(
+                "[COMPRESS UPLOADER] unreadable source %s; returning "
+                "original", src)
+            self.respond_success(str(file_path))
+            return
+        if src_w <= width and src_h <= height:
+            # Nothing to shrink — hand back the original instead of
+            # re-encoding it at the same size.
+            self.respond_success(str(file_path))
+            return
+
+        dst = _compressed_cache_path(
+            media_type, device_id, filename, width, height)
+        try:
+            if (not os.path.isfile(dst)
+                    or os.path.getmtime(dst) < os.path.getmtime(src)):
+                # Same memory-bounding pattern as the admin thumbnails:
+                # serialise generation, re-check inside the lock.
+                with _THUMB_GEN_SEMAPHORE:
+                    if (not os.path.isfile(dst)
+                            or os.path.getmtime(dst)
+                            < os.path.getmtime(src)):
+                        _generate_compressed(src, dst, width, height)
+        except Exception:
+            logger.exception(
+                "[COMPRESS UPLOADER] generation failed for %s; returning "
+                "original", src)
+            self.respond_success(str(file_path))
+            return
+
+        host = self.headers.get("Host", "ifp.ga.codethriving.com")
+        scheme = ("https" if isinstance(self.connection, ssl.SSLSocket)
+                  else "http")
+        url = (f"{scheme}://{host}/photos_compressed/{media_type}"
+               f"/{device_id}/{filename}/{width}x{height}.jpg")
+        logger.info(
+            "[COMPRESS UPLOADER] device=%s type=%s %s -> %dx%d",
+            device_id, media_type, filename, width, height)
+        self.respond_success(url)
+
+    def handle_compressed_photo_serve(self, path):
+        """Serve a cached resized variant.
+
+        URL format:
+        ``/photos_compressed/{type}/{device_id}/{filename}/{w}x{h}.jpg``.
+        Serve-only: variants are created by ``handle_compress_uploader``,
+        so an unknown path is a plain 404.
+        """
+        rest = path[len("/photos_compressed/"):]
+        parts = [unquote(p) for p in rest.split("/")]
+        if len(parts) != 4:
+            self.send_error(404, "Not found")
+            return
+        media_type, device_id, filename, variant = parts
+        if (media_type not in ("normal", "ai")
+                or not device_id.isdigit()
+                or not re.fullmatch(r"\d+x\d+\.jpg", variant)):
+            self.send_error(404, "Not found")
+            return
+
+        file_path = os.path.join(
+            _compressed_variants_dir(
+                media_type, device_id, os.path.basename(filename)),
+            variant)
+        real_base = os.path.realpath(config.PHOTOS_COMPRESSED_DIR)
         if not os.path.realpath(file_path).startswith(real_base):
             self.send_error(403, "Forbidden")
             return
@@ -979,7 +1213,9 @@ class MediaMixin:
     def handle_del_media(self, body):
         """Delete photos by media ID.
 
-        Body: {'id': ['606223218751598448', ...], 'device_id': 29540}
+        Body (display app)       : {'id': ['606223218751598448', ...], 'device_id': 29540}
+        Body (control app 2.3.3+): {'id': [606223218751598448, ...], 'device_id': 29540}
+        (yes, really, the control app sends it without quotes...)
         The 'id' field contains media IDs as returned by mediaList, computed
         as str(file_hash % (10**18)) where file_hash = int.from_bytes(
         sha256(filename.encode()).digest()[:8], "big").
@@ -1018,6 +1254,12 @@ class MediaMixin:
                             os.remove(thumb)
                         except OSError:
                             pass
+                        # And the compressed variants generated by the
+                        # 2.3.3 compress-uploader flow.
+                        shutil.rmtree(
+                            _compressed_variants_dir(
+                                media_type, device_id, filename),
+                            ignore_errors=True)
                         # Drop the cached metadata row too so the
                         # upload/capture sort doesn't keep ranking a
                         # photo that no longer exists.
