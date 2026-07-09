@@ -118,6 +118,7 @@ def api_server(mosquitto, tmp_path):
     cfg.PHOTOS_AI_DIR = str(tmp_path / "photos_with_ai")
     cfg.PHOTOS_TEMP_DIR = str(tmp_path / "photos_temp")
     cfg.THUMBNAILS_DIR = str(tmp_path / "thumbnails")
+    cfg.PHOTOS_COMPRESSED_DIR = str(tmp_path / "photos_compressed")
     cfg.LOGS_DIR = str(tmp_path / "logs")
     cfg.WEBAPP_DIR = str(tmp_path / "webapp")
 

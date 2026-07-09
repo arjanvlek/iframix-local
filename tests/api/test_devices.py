@@ -240,11 +240,18 @@ class TestUnbindUser:
         thumb_normal_dir = os.path.join(
             cfg.THUMBNAILS_DIR, "normal", str(device_id))
         thumb_ai_dir = os.path.join(cfg.THUMBNAILS_DIR, "ai", str(device_id))
+        compressed_normal_dir = os.path.join(
+            cfg.PHOTOS_COMPRESSED_DIR, "normal", str(device_id))
+        compressed_ai_dir = os.path.join(
+            cfg.PHOTOS_COMPRESSED_DIR, "ai", str(device_id))
         log_dir = os.path.join(cfg.LOGS_DIR, device_uuid)
         os.makedirs(photo_dir, exist_ok=True)
         os.makedirs(ai_dir, exist_ok=True)
         os.makedirs(thumb_normal_dir, exist_ok=True)
         os.makedirs(thumb_ai_dir, exist_ok=True)
+        os.makedirs(os.path.join(compressed_normal_dir, "x.jpg"),
+                    exist_ok=True)
+        os.makedirs(os.path.join(compressed_ai_dir, "y.jpg"), exist_ok=True)
         os.makedirs(log_dir, exist_ok=True)
         with open(os.path.join(photo_dir, "x.jpg"), "wb") as f:
             f.write(b"\xff\xd8\xff\xd9")
@@ -253,6 +260,12 @@ class TestUnbindUser:
         with open(os.path.join(thumb_normal_dir, "x.jpg.jpg"), "wb") as f:
             f.write(b"\xff\xd8\xff\xd9")
         with open(os.path.join(thumb_ai_dir, "y.jpg.jpg"), "wb") as f:
+            f.write(b"\xff\xd8\xff\xd9")
+        with open(os.path.join(compressed_normal_dir, "x.jpg",
+                               "200x150.jpg"), "wb") as f:
+            f.write(b"\xff\xd8\xff\xd9")
+        with open(os.path.join(compressed_ai_dir, "y.jpg",
+                               "200x150.jpg"), "wb") as f:
             f.write(b"\xff\xd8\xff\xd9")
         with open(os.path.join(log_dir, "client.log"), "w") as f:
             f.write("hello\n")
@@ -303,6 +316,8 @@ class TestUnbindUser:
         assert not os.path.isdir(ai_dir)
         assert not os.path.isdir(thumb_normal_dir)
         assert not os.path.isdir(thumb_ai_dir)
+        assert not os.path.isdir(compressed_normal_dir)
+        assert not os.path.isdir(compressed_ai_dir)
         assert not os.path.isdir(log_dir)
 
         # DB
