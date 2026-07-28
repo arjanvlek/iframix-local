@@ -20,17 +20,17 @@ class DownloadMixin:
                     {
                         "store_type": "android",
                         "store_address": "",
-                        "version": "2.3.3",
-                        "num_version": 90,
-                        "updated_at": "2026-07-02",
-                        "download_address": "https://down.codethriving.com/default/APP/FOCASE/iFramixPro/iFramix_Pro_2.3.3.apk"
+                        "version": "2.3.4",
+                        "num_version": 91,
+                        "updated_at": "2026-07-15",
+                        "download_address": "https://down.codethriving.com/default/APP/FOCASE/iFramixPro/iFramix_Pro_2.3.4.apk"
                     },
                     {
                         "store_type": "ios",
                         "store_address": "https://apps.apple.com/us/app/iframix-pro/id6470332689",
-                        "version": "2.3.3",
-                        "num_version": 90,
-                        "updated_at": "2026-07-02",
+                        "version": "2.3.4",
+                        "num_version": 91,
+                        "updated_at": "2026-07-15",
                         "download_address": None
                     }
                 ]

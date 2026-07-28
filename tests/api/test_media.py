@@ -384,6 +384,44 @@ class TestMediaAndPhotos:
         time.sleep(0.2)
         assert not os.path.isfile(filepath)
 
+    def test_del_media_immediate_media_list_consistency(self, api_server):
+        """A mediaList fetch right after delMedia responds must not
+        contain the deleted photo.
+
+        The 2.3.4 display app refetches mediaList ~200 ms after a
+        delete; source files are therefore removed synchronously
+        before the delMedia response is sent (only cache/metadata
+        cleanup stays in a background thread).
+        """
+        device_dir = str(api_server["tmp_path"] / "photos" / "1")
+        os.makedirs(device_dir, exist_ok=True)
+        filepath = os.path.join(device_dir, "race.jpg")
+        with open(filepath, "wb") as f:
+            f.write(b"\xff\xd8\xff\xe0" + b"\x00" * 50)
+
+        list_resp = requests.get(
+            f"{api_server['url']}/api/ipad/media/mediaList",
+            params={"device_id": 1, "page": 1, "limit": 10, "type": "normal"},
+        )
+        records = list_resp.json()["data"]["list"]
+        target = next(r for r in records if r["asset"]["filename"] == "race.jpg")
+
+        resp = requests.post(
+            f"{api_server['url']}/api/ipad/media/delMedia",
+            json={"device_id": 1, "id": [target["id"]]},
+        )
+        assert resp.json()["code"] == 1
+
+        # No sleep on purpose: the file must already be gone and the
+        # refetched list must already be consistent.
+        assert not os.path.isfile(filepath)
+        refetch = requests.get(
+            f"{api_server['url']}/api/ipad/media/mediaList",
+            params={"device_id": 1, "page": 1, "limit": 10, "type": "normal"},
+        )
+        names = [r["asset"]["filename"] for r in refetch.json()["data"]["list"]]
+        assert "race.jpg" not in names
+
     def test_del_media_preserves_other_photos(self, api_server):
         """delMedia only removes the targeted photo, not others."""
         device_dir = str(api_server["tmp_path"] / "photos" / "1")
