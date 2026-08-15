@@ -39,15 +39,15 @@ Contains all your display devices.
 
 Selecting a device in the sidebar opens its settings (six tabs):
 
-- **Photos**: A gallery for all your photos with an **All / Normal / AI** filter. Choose the type of photos (Normal or AI), then drag photos onto the dropzone (or click it to browse). Uploads start immediately. The **Sort** dropdown offers **File name** (newest first), **Upload date** (newest file modification time first), and **Capture date (EXIF)** (newest EXIF capture date first, with photos that have no readable capture date sorted last).
+- **Photos**: A gallery for all your photos with an **All / Normal / Gallery Mode** filter (Gallery Mode was called "Photos + AI" before app 2.3.4). Choose the type of photos (Normal or Gallery Mode), then drag photos onto the dropzone (or click it to browse). Uploads start immediately. The **Sort** dropdown offers **File name** (newest first), **Upload date** (newest file modification time first), and **Capture date (EXIF)** (newest EXIF capture date first, with photos that have no readable capture date sorted last).
 - Clicking a normal photo opens a full-size preview
-- Clicking an **AI** photo opens the **AI display template** picker — a modal with a large live preview that renders your actual photo in the selected layout, next to a named list of every template the display can render (10 styles on 4:3 displays, 5 on 16:9 displays for horizontal photos, 4 for vertical photos). 
-- Each AI thumbnail shows a chip with its current template. 
+- Clicking a **Gallery Mode** photo opens the **Gallery Mode display template** picker — a modal with a large live preview that renders your actual photo in the selected layout, next to a named list of every template the display can render (10 styles on 4:3 displays, 5 on 16:9 displays for horizontal photos, 4 for vertical photos). 
+- Each Gallery Mode thumbnail shows a chip with its current template. 
 - Every thumbnail has a check button in its corner: tick one or more photos and use **Delete selected** to remove them in bulk (after a confirmation prompt).
 - **Flip clock**: pick the 12-hour / 24-hour format and one of the 5 flip-clock styles iFramix Pro 2.2.29 introduced.
 - **Weather**: search and select your city, choose °C / °F, and pick one of the 4 weather-station styles iFramix Pro 2.2.29 introduced.
 - **Calendars**: link an external calendar (Google / Apple iCloud / Outlook, or any iCal URL) or delete a previously linked one.
-- **Playback**: configure the playback mode iFramix Pro 2.3.1 introduced, where the display automatically switches between modules (Photos, AI Photos, Flip Clock, Weather, Calendar). In **Random** mode, pick the switch interval (1–240 minutes) and toggle which modules join the rotation. In **Fixed** mode, pick a default module and optionally add daily time rules (start time, end time, module) that override it; rules repeat daily, must stay within one day, and cannot overlap. Existing rules can be edited and deleted. Changes are applied when you press **Save playback** — the display device is notified immediately over MQTT.
+- **Playback**: configure the playback mode iFramix Pro 2.3.1 introduced, where the display automatically switches between modules (Photos, Gallery Mode, Flip Clock, Weather, Calendar). In **Random** mode, pick the switch interval (1–240 minutes) and toggle which modules join the rotation. In **Fixed** mode, pick a default module and optionally add daily time rules (start time, end time, module) that override it; rules repeat daily, must stay within one day, and cannot overlap. Existing rules can be edited and deleted. Changes are applied when you press **Save playback** — the display device is notified immediately over MQTT.
 - **Remove**: deletes the display device after confirmation. If you delete a device, all its associated data, including photos, will be deleted from the server.
 
 ## Unsupported features

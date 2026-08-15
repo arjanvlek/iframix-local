@@ -313,7 +313,7 @@ may have to proxy this project through your Web Server (search for 'apache rever
 ### How things work under-the-hood
 
 - [Architecture and MQTT message flow](docs/architecture.md): components, topics, and how they talk to each other.
-- [Photos](docs/photos.md): local replacement for AI mode and cloud uploads, classification flow.
+- [Photos](docs/photos.md): local replacement for Gallery Mode and cloud uploads, classification flow.
 - [Weather](docs/weather.md): Open-Meteo adapter, per-device config, weather icons.
 - [Project structure](docs/project-structure.md): full file layout and runtime artefacts.
 - [Compatibility](COMPATIBILITY.md): which features work with which app version.

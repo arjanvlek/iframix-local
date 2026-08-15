@@ -420,7 +420,7 @@ function renderGallery(view) {
         empty.hidden = shown.length > 0;
         empty.textContent = "No " +
             (state.filter === "all" ? "" :
-                state.filter === "ai" ? "AI " : "normal ") +
+                state.filter === "ai" ? "Gallery Mode " : "normal ") +
             "photos yet — drop some above to get started.";
     }
 
@@ -448,7 +448,7 @@ function photoNode(view, m, type) {
     if (type === 'ai') {
         const badge = document.createElement("span");
         badge.className = "ph-badge ai";
-        badge.textContent = "AI"
+        badge.textContent = "Gallery Mode"
         el.appendChild(badge);
     }
 
@@ -602,7 +602,7 @@ async function handleFiles(view, fileList) {
         });
         if (data.code === 1) {
             toast(assetIds.length +
-                (kind === "ai" ? " AI image" : " photo") +
+                (kind === "ai" ? " Gallery Mode photo" : " photo") +
                 (assetIds.length > 1 ? "s" : "") + " added");
             loadPhotos(view);
         } else {
@@ -770,7 +770,7 @@ async function saveWeather(view) {
 
 const PLAYBACK_MODULE_NAMES = {
     album: "Photos",
-    album_ai: "AI Photos",
+    album_ai: "Gallery Mode",
     screensaver: "Flip Clock",
     weather: "Weather",
     calendar: "Calendar",
@@ -1155,7 +1155,7 @@ function closeLightbox() {
     $("img", lb).src = "";
 }
 
-/* ===================== AI template modal ===================== */
+/* ===================== Gallery Mode template modal ===================== */
 //
 // The modal keeps the design's layout (large live preview left, named
 // option list right) but the catalog is the real aspect-aware one: the
@@ -1548,7 +1548,7 @@ function wireDeviceView(view) {
     // photos: upload kind
     wireSeg($('[data-seg="upload-kind"]', view), (v) => {
         state.kind = v;
-        const label = v === "ai" ? "AI" : "Normal";
+        const label = v === "ai" ? "Gallery Mode" : "Normal";
         $all(".kind-label", view).forEach(
             (el) => { el.textContent = label; });
     });

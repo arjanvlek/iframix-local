@@ -640,7 +640,7 @@ select.input { appearance: none; cursor: pointer;
 .photo.selected::after { content:""; position:absolute; inset:0; background: var(--accent); opacity:0.1;
   pointer-events: none; }
 
-/* template chip on AI thumbnails */
+/* template chip on Gallery Mode thumbnails */
 .photo .ph-tpl {
   position: absolute; left: 0; right: 0; bottom: 0;
   padding: 16px 8px 6px;
@@ -883,7 +883,7 @@ table.chargers { width: 100%; border-collapse: collapse; font-size: 13.5px; min-
 .lb-close:hover { background: oklch(1 0 0 / 0.22); }
 
 /* ===========================================================================
-   Modal + AI display template picker
+   Modal + Gallery Mode display template picker
    =========================================================================== */
 .modal-scrim {
   position: fixed; inset: 0; z-index: 160;

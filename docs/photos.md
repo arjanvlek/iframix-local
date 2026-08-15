@@ -1,8 +1,8 @@
 # Photos
 
-There are 2 methods to view photos: "Photos" and "Photos + AI".
+There are 2 methods to view photos: "Photos" and "Gallery Mode" (called "Photos + AI" before app 2.3.4).
 
-## Local replacement for AI mode
+## Local replacement for Gallery Mode
 
 In the real product, photos with AI are processed by an AI service, which generates a title and a quote that should match the content of the photo (but works terribly in practice).
 
@@ -21,7 +21,7 @@ In the real product, photos are uploaded to the cloud using either the Qiniu SDK
 
 In this local implementation, photos are served from the `photos` and `photos_with_ai` directories on your own server instead.
 
-Photos are stored per device in `photos/{device_id}/` (normal photo viewer) or `photos_with_ai/{device_id}/` (AI photo viewer). 
+Photos are stored per device in `photos/{device_id}/` (normal photo viewer) or `photos_with_ai/{device_id}/` (Gallery Mode viewer). 
 Each display device has its own photo collection, identified by `device_id`.
 
 The upload flow is simulated in such a way that upload traffic for the Qiniu SDK is redirected to a POST endpoint on `/`. 
