@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # Module identifiers used by the iFramix Pro 2.3.1 playback settings,
 # exactly as the native app posts them: album = Photos, album_ai =
-# Photos + AI, screensaver = Flip Clock, weather = Weather Station,
+# Gallery Mode, screensaver = Flip Clock, weather = Weather Station,
 # calendar = Calendar.
 PLAYBACK_MODULES = ("album", "album_ai", "screensaver", "weather", "calendar")
 

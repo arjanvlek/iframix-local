@@ -88,11 +88,11 @@ _WEATHER_STYLES = [
     (3, "Weather Station", "weather/04-weather-station.png"),
 ]
 # Playback modules exactly as iFramix Pro 2.3.1 posts them, with the
-# labels the native app shows (album = Photos, album_ai = AI Photos,
+# labels the native app shows (album = Photos, album_ai = Gallery Mode,
 # screensaver = Flip Clock, weather = Weather, calendar = Calendar).
 _PLAYBACK_MODULES = [
     ("album", "Photos"),
-    ("album_ai", "AI Photos"),
+    ("album_ai", "Gallery Mode"),
     ("screensaver", "Flip Clock"),
     ("weather", "Weather"),
     ("calendar", "Calendar"),
@@ -539,7 +539,7 @@ class AdminMixin:
                                 {_icon('image', 15)}Normal</button>
                             <button type="button" data-value="ai"
                                     aria-pressed="false">
-                                {_icon('sparkle', 15)}AI</button>
+                                {_icon('sparkle', 15)}Gallery Mode</button>
                         </div>
                         <span class="note">New uploads go to the
                             <b class="kind-label">Normal</b> album</span>
@@ -566,7 +566,7 @@ class AdminMixin:
                                 <span class="fcount"
                                       data-fcount="normal">0</span></button>
                             <button type="button" data-value="ai"
-                                    aria-pressed="false">AI
+                                    aria-pressed="false">Gallery Mode
                                 <span class="fcount" data-fcount="ai">0</span>
                             </button>
                         </div>
@@ -772,7 +772,7 @@ class AdminMixin:
                         <div class="dz-text">
                             <h4>Remove this display device</h4>
                             <p>Deletes the device's session, charger binding,
-                            calendars, AI album config, photo settings, and
+                            calendars, Gallery Mode config, photo settings, and
                             its <code>photos/</code>,
                             <code>photos_with_ai/</code> and
                             <code>logs/</code> directories. This cannot be
