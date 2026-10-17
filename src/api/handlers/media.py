@@ -210,39 +210,88 @@ _AI_TEMPLATE_RANGE_HORIZONTAL = 5
 _AI_TEMPLATE_RANGE_VERTICAL = 4
 
 
-def _pick_ai_template_for_image(filepath):
-    """Return ``(template_id, template_type)`` matched to image orientation.
+def _display_template_type(device_id):
+    """Return the ``template_type`` the display with ``device_id`` expects.
 
-    Reads the image's pixel dimensions and picks:
-
-    - ``template_type=2`` (vertical) + ``template_id`` in 1..4 for portrait
-      images (height greater than width). The webapp's vertical templates
-      lay the image into a tall area, which preserves portrait composition.
-    - ``template_type=1`` (horizontal) + ``template_id`` in 1..5 for
-      landscape and square images (width greater than or equal to height).
-      Square images default to horizontal because that matches the
-      orientation most iPads are mounted in.
-
-    Falls back to horizontal if the dimensions cannot be read (e.g. the
-    file is malformed or the format is not JPEG/PNG).
+    The display webapp picks its Gallery Mode catalog from its *own*
+    orientation (``isRow`` from ``window.orientation``) and stores that
+    orientation as ``template_type`` (1 = landscape, 2 = portrait). A
+    stored ``template_type`` that does not match the display's orientation
+    makes the webapp ignore ``template_id`` and fall back to a random pick
+    (verified on an iPad 4 with webapp 2.3.8, see
+    ``docs/gallery-mode-templates-2.3.8.md`` §1). The orientation is
+    derived from the session's last reported ``width``/``height``
+    (``width >= height`` → 1). Returns ``None`` when the session is unknown
+    or has no usable dimensions, so callers can fall back to the photo's
+    orientation.
     """
+    if device_id is None:
+        return None
     try:
-        width, height = get_image_size(filepath)
-    except Exception:
-        width, height = 0, 0
-    if width > 0 and height > 0 and height > width:
+        wanted = int(device_id)
+    except (TypeError, ValueError):
+        return None
+    for sess in load_sessions().values():
+        try:
+            if int(sess.get("id") or 0) != wanted:
+                continue
+            w = int(sess.get("width") or 0)
+            h = int(sess.get("height") or 0)
+        except (TypeError, ValueError):
+            return None
+        if w <= 0 or h <= 0:
+            return None
+        return 2 if h > w else 1
+    return None
+
+
+def _pick_ai_template_for_image(filepath, display_type=None):
+    """Return ``(template_id, template_type)`` for a new AI photo.
+
+    ``template_type`` is the orientation of the *display* (1 = landscape,
+    2 = portrait) because that is how the webapp interprets it (see
+    ``_display_template_type``). When ``display_type`` is given (1 or 2) it
+    wins. Otherwise the photo's own orientation is used as a proxy — the
+    only information available when the display has not reported its
+    dimensions yet:
+
+    - portrait images (height greater than width) → ``template_type=2``
+    - landscape and square images → ``template_type=1`` (square defaults
+      to landscape because that matches the orientation most frames are
+      mounted in); unreadable dimensions also fall back to landscape.
+
+    ``template_id`` is rolled in 1..5 (landscape) / 1..4 (portrait) — the
+    16:9 catalog sizes, which are also the smallest of every 4:3 catalog
+    (8/7 on webapp 2.3.8, 10/10 on 2.3.1–2.3.5), so the id is never
+    clamped on any supported display.
+    """
+    if display_type in (1, 2):
+        ttype = display_type
+    else:
+        try:
+            width, height = get_image_size(filepath)
+        except Exception:
+            width, height = 0, 0
+        ttype = 2 if (width > 0 and height > 0 and height > width) else 1
+    if ttype == 2:
         return random.randint(1, _AI_TEMPLATE_RANGE_VERTICAL), 2
     return random.randint(1, _AI_TEMPLATE_RANGE_HORIZONTAL), 1
 
 
 def _assign_ai_template(media_id, settings, filepath, *, device_id=None):
-    """Pick a template matched to the photo and persist it.
+    """Pick a template for the photo's display and persist it.
 
     Mutates ``settings`` in place; the caller is responsible for calling
     ``save_media_settings(settings)``. Idempotent: if an existing entry
     already has a non-zero ``template_id`` and a valid ``template_type``,
     that entry is returned unchanged so admin-edited values survive
-    subsequent ``mediaList`` calls.
+    subsequent ``mediaList`` calls (even when its ``template_type`` no
+    longer matches the display's orientation — the admin panel flags such
+    rows instead of rewriting them silently).
+
+    ``template_type`` follows the display's orientation when the
+    ``device_id`` session has reported its dimensions, otherwise the
+    photo's orientation (see ``_pick_ai_template_for_image``).
 
     Returns the (possibly pre-existing) ``(template_id, template_type)``
     pair so callers can include it in MQTT payloads.
@@ -253,7 +302,8 @@ def _assign_ai_template(media_id, settings, filepath, *, device_id=None):
     if tid > 0 and ttype in (1, 2):
         return tid, ttype
 
-    tid, ttype = _pick_ai_template_for_image(filepath)
+    tid, ttype = _pick_ai_template_for_image(
+        filepath, _display_template_type(device_id))
 
     existing.setdefault("display", "")
     existing["template_id"] = tid
@@ -505,8 +555,9 @@ class MediaMixin:
         total_count = len(photos)
 
         # The app fetches this endpoint paginated: the display slideshow
-        # asks for limit=300&page=1, and the photo-manage page (app 2.3.3+)
-        # walks it 20 per page, driving its pager from
+        # asks for limit=300&page=1, and the photo-manage page walks it
+        # 20 per page on app 2.3.3-2.3.5 and 10 per page on app 2.3.8,
+        # driving its pager from
         # ``pagination.totalCount``. Slice before building records so
         # off-page AI photos don't pay the EXIF/remark cost on every page
         # request. A non-positive limit returns everything (mirroring the
