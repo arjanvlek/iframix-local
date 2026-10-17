@@ -26,6 +26,9 @@ MQTT_USER = "iframix_local_api"
 MQTT_PASS = "notvalidated"
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"}
 INDEX_HTML_FILE = "index.html"
+# iFramix Pro app version of the default bundle (webapp/index.html). Used
+# when the served index file cannot be read to find its ``appVersion``.
+WEBAPP_DEFAULT_VERSION = "2.3.8"
 
 # Tracks pending uploads: asset_id (str) -> filename (str)
 # Populated by handle_asset_upload(), consumed by handle_set_media()

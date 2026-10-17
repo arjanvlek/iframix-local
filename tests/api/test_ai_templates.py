@@ -24,10 +24,13 @@ class TestAITemplateAssignment:
 
     The assignment must:
 
-    - Match the image's orientation (portrait → vertical, landscape →
-      horizontal) so the template visually fits the photo.
-    - Stay within the 16:9 catalog ranges (1..5 horizontal, 1..4
-      vertical) so it works on every supported iPad without clamping.
+    - Use the display's orientation as ``template_type`` when the
+      display's session has reported its dimensions (see
+      ``TestAITemplateFollowsDisplayOrientation``); the tests in this
+      class use device ``42``, which has no session, so the photo's own
+      orientation decides (portrait → 2, landscape → 1).
+    - Stay within the 16:9 catalog ranges (1..5 landscape, 1..4
+      portrait) so it works on every supported display without clamping.
     - Be stable across repeated reads.
     - Skip already-assigned photos so admin edits aren't overwritten.
     """
@@ -213,3 +216,94 @@ class TestAITemplateAssignment:
             tid, ttype = _pick_ai_template_for_image(_png(800, 800))
             assert ttype == 1
             assert 1 <= tid <= 5
+
+
+class TestAITemplateFollowsDisplayOrientation:
+    """``template_type`` is the DISPLAY orientation, not the photo's.
+
+    The display webapp selects its Gallery Mode catalog from its own
+    orientation and ignores a stored ``template_id`` whose
+    ``template_type`` does not match (verified on an iPad 4 with webapp
+    2.3.8, ``docs/gallery-mode-templates-2.3.8.md`` §1). So when the
+    display's session has reported its dimensions, the auto-assignment
+    must use that orientation; only sessions without dimensions fall
+    back to the photo's orientation (covered by the class above, whose
+    device ``42`` has no session).
+    """
+
+    def _seed_display(self, base_url, uuid, width, height):
+        device_id = get_device_id(base_url, uuid)
+        requests.post(
+            f"{base_url}/api/ipad/device/bindUser",
+            json={"uuid": uuid, "device_name": "Frame",
+                  "device_type": "ios", "ios_version": "16.0",
+                  "width": width, "height": height},
+        )
+        return str(device_id)
+
+    def _drop_and_list(self, api_server, device_id, filename, w, h):
+        device_dir = str(
+            api_server["tmp_path"] / "photos_with_ai" / device_id)
+        os.makedirs(device_dir, exist_ok=True)
+        with open(os.path.join(device_dir, filename), "wb") as f:
+            f.write(make_png(w, h))
+        items = requests.get(
+            f"{api_server['url']}/api/ipad/media/mediaList",
+            params={"device_id": device_id, "page": 1, "limit": 50,
+                    "type": "ai"},
+        ).json()["data"]["list"]
+        return {os.path.basename(i["asset"]["url"]).split("_")[0]: i
+                for i in items}
+
+    def test_portrait_photo_on_landscape_display_gets_type_1(
+            self, api_server):
+        dev = self._seed_display(api_server["url"], "ori-land", 1024, 768)
+        recs = self._drop_and_list(api_server, dev, "tall.png", 600, 900)
+        rec = recs["tall"]
+        assert rec["template_type"] == 1
+        assert 1 <= rec["template_id"] <= 5
+
+    def test_landscape_photo_on_portrait_display_gets_type_2(
+            self, api_server):
+        dev = self._seed_display(api_server["url"], "ori-port", 768, 1024)
+        recs = self._drop_and_list(api_server, dev, "wide.png", 900, 600)
+        rec = recs["wide"]
+        assert rec["template_type"] == 2
+        assert 1 <= rec["template_id"] <= 4
+
+    def test_session_without_dimensions_falls_back_to_photo(
+            self, api_server):
+        # login only: width/height stay 0 → photo orientation decides
+        dev = str(get_device_id(api_server["url"], "ori-nodims"))
+        recs = self._drop_and_list(api_server, dev, "tall.png", 600, 900)
+        assert recs["tall"]["template_type"] == 2
+
+    def test_set_media_uses_display_orientation(self, api_server):
+        """The setMedia path (upload → classify) also follows the display."""
+        dev = self._seed_display(api_server["url"], "ori-set", 1024, 768)
+        png = make_png(600, 900)
+        up = requests.post(
+            f"{api_server['url']}/api/user/asset/uploader",
+            files={"file": ("tall.png", png, "image/png")},
+            data={"more": "1", "driver": "local"},
+        ).json()
+        asset_id = str(up["data"]["id"])
+        requests.post(
+            f"{api_server['url']}/api/ipad/media/setMedia",
+            json={"device_id": int(dev), "asset_ids": [asset_id],
+                  "type": "ai"},
+        )
+        recs = self._drop_and_list(api_server, dev, "unused.png", 100, 100)
+        assert recs["tall"]["template_type"] == 1
+
+    def test_helper_prefers_display_type(self, tmp_path):
+        from src.api.handlers.media import _pick_ai_template_for_image
+        p = tmp_path / "tall.png"
+        p.write_bytes(make_png(600, 900))
+        for _ in range(10):
+            tid, ttype = _pick_ai_template_for_image(str(p), 1)
+            assert ttype == 1 and 1 <= tid <= 5
+            tid, ttype = _pick_ai_template_for_image(str(p), 2)
+            assert ttype == 2 and 1 <= tid <= 4
+            tid, ttype = _pick_ai_template_for_image(str(p), None)
+            assert ttype == 2

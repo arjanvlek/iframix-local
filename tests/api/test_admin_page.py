@@ -1,5 +1,6 @@
 """Admin /admin HTML page + display-aspect classifier."""
 import json
+import os
 
 import pytest
 import requests
@@ -13,9 +14,12 @@ class TestAdminPage:
 
     The aspect classification matches the iPad webapp's ``setMaxSize``
     logic: longer/shorter side ratio compared to 4/3 vs 16/9, picking
-    whichever is closer. The webapp's catalog has 10 templates per
-    orientation on 4:3 and 5/4 on 16:9; the picker uses the attribute
-    to show the right number of buttons.
+    whichever is closer. The webapp's 4:3 catalog has 8 landscape / 7
+    portrait templates on 2.3.8 (10 per orientation on 2.3.1-2.3.5) and
+    5 / 4 on 16:9; the picker combines the attribute with
+    ``data-orientation`` and ``<body data-webapp-version>`` to show the
+    right buttons (see TestAdminDisplayOrientation and
+    TestAdminWebappVersion below).
     """
 
     def seed_session(self, base_url, uuid, width, height):
@@ -92,16 +96,16 @@ class TestAdminPage:
         Hits the helper without HTTP plumbing so unusual dimensions
         (negatives, strings, None) are easy to cover.
         """
-        from src.api.handlers.admin import _classify_display_aspect
-        assert _classify_display_aspect(2048, 1536) == "4x3"
-        assert _classify_display_aspect(1536, 2048) == "4x3"
-        assert _classify_display_aspect(1024, 768) == "4x3"
-        assert _classify_display_aspect(1920, 1080) == "16x9"
-        assert _classify_display_aspect(1366, 768) == "16x9"
-        assert _classify_display_aspect(0, 0) == "16x9"
-        assert _classify_display_aspect(None, None) == "16x9"
-        assert _classify_display_aspect("foo", "bar") == "16x9"
-        assert _classify_display_aspect(-1, 100) == "16x9"
+        from src.api.handlers.admin.display import classify_display_aspect
+        assert classify_display_aspect(2048, 1536) == "4x3"
+        assert classify_display_aspect(1536, 2048) == "4x3"
+        assert classify_display_aspect(1024, 768) == "4x3"
+        assert classify_display_aspect(1920, 1080) == "16x9"
+        assert classify_display_aspect(1366, 768) == "16x9"
+        assert classify_display_aspect(0, 0) == "16x9"
+        assert classify_display_aspect(None, None) == "16x9"
+        assert classify_display_aspect("foo", "bar") == "16x9"
+        assert classify_display_aspect(-1, 100) == "16x9"
 
     def test_picker_modal_emitted_with_dynamic_count(self, api_server):
         """The modal HTML is shipped with an empty ``.template-grid``
@@ -148,7 +152,7 @@ class TestAdminPage:
         assert "preview-text-bg" in resp.text
         # The option builder calls the generator with the photo URL
         # composited in, and the live preview re-renders on selection.
-        assert "_templatePreviewSvg(_tplCtx.aspect, i, m.url)" in resp.text
+        assert "_templatePreviewSvg(_tplCtx.aspect, i, m.url, _tplCtx.templateType," in resp.text
         assert "updateTemplatePreview" in resp.text
 
     def test_device_status_endpoint(self, api_server):
@@ -202,3 +206,139 @@ class TestAdminPage:
         # with the page.
         assert "Auto-refresh paused" in resp.text
         assert '"Paused"' in resp.text
+
+
+class TestAdminDisplayOrientation:
+    """GET /admin renders a ``data-orientation`` attribute next to
+    ``data-aspect`` on every device view.
+
+    The display webapp picks its Gallery Mode template catalog from its
+    own orientation and stores that orientation as ``template_type``
+    (1 = landscape, 2 = portrait); a mismatching ``template_type`` makes
+    it ignore ``template_id`` (verified on an iPad 4 with webapp 2.3.8,
+    ``docs/gallery-mode-templates-2.3.8.md``). The admin picker reads the
+    attribute to offer the right catalog and to save the right
+    ``template_type``.
+    """
+
+    def _orientation_for(self, base_url, uuid):
+        import re
+        resp = requests.get(f"{base_url}/admin")
+        assert resp.status_code == 200
+        m = re.search(
+            r'data-uuid="' + re.escape(uuid) +
+            r'"\s+data-aspect="[^"]+"\s+data-orientation="([^"]+)"',
+            resp.text,
+        )
+        assert m, f"no data-orientation for uuid {uuid} in /admin"
+        return m.group(1)
+
+    def test_landscape_for_wide_dimensions(self, api_server):
+        TestAdminPage().seed_session(
+            api_server["url"], "ori-uuid-land", 2048, 1536)
+        assert self._orientation_for(
+            api_server["url"], "ori-uuid-land") == "landscape"
+
+    def test_portrait_for_tall_dimensions(self, api_server):
+        TestAdminPage().seed_session(
+            api_server["url"], "ori-uuid-port", 1536, 2048)
+        assert self._orientation_for(
+            api_server["url"], "ori-uuid-port") == "portrait"
+
+    def test_default_landscape_when_dimensions_missing(self, api_server):
+        login(api_server["url"], "ori-uuid-empty", origin="view")
+        assert self._orientation_for(
+            api_server["url"], "ori-uuid-empty") == "landscape"
+
+    def test_classifier_unit(self):
+        from src.api.handlers.admin.display import classify_display_orientation
+        assert classify_display_orientation(1024, 768) == "landscape"
+        assert classify_display_orientation(768, 1024) == "portrait"
+        assert classify_display_orientation(1000, 1000) == "landscape"
+        assert classify_display_orientation(0, 0) == "landscape"
+        assert classify_display_orientation(None, "x") == "landscape"
+
+    def test_page_ships_orientation_aware_catalog(self, api_server):
+        """The inlined admin scripts carry the 2.3.8 catalogs (8 landscape /
+        7 portrait names) and derives template_type from the view."""
+        resp = requests.get(f"{api_server['url']}/admin")
+        assert "TPL_META_4X3_LANDSCAPE" in resp.text
+        assert "TPL_META_4X3_PORTRAIT" in resp.text
+        assert "function displayTemplateType(view)" in resp.text
+        for name in ("Legacy side ribbon", "Glass pillar", "Classic bottom"):
+            assert name in resp.text
+
+
+class TestAdminWebappVersion:
+    """GET /admin stamps ``<body data-webapp-version="...">`` with the
+    webapp version this server serves, so the Gallery Mode template
+    picker can offer the 2.3.8 catalog (8 landscape / 7 portrait 4:3
+    layouts) for the default bundle and the 2.3.1–2.3.5 catalog (10 per
+    orientation) when an older bundle is served with
+    ``--webapp-version``.
+    """
+
+    def _body_version(self, base_url):
+        import re
+        resp = requests.get(f"{base_url}/admin")
+        assert resp.status_code == 200
+        m = re.search(r'<body data-webapp-version="([^"]*)">', resp.text)
+        assert m, "no data-webapp-version on <body>"
+        return m.group(1)
+
+    def test_default_bundle_reports_default_version(self, api_server):
+        """The test WEBAPP_DIR has no index.html, so the version falls
+        back to config.WEBAPP_DEFAULT_VERSION."""
+        cfg = api_server["module"].config
+        assert cfg.INDEX_HTML_FILE == "index.html"
+        assert self._body_version(api_server["url"]) == \
+            cfg.WEBAPP_DEFAULT_VERSION
+
+    def test_version_read_from_default_index_file(self, api_server):
+        cfg = api_server["module"].config
+        os.makedirs(cfg.WEBAPP_DIR, exist_ok=True)
+        with open(os.path.join(cfg.WEBAPP_DIR, "index.html"), "w") as fh:
+            fh.write("<script>window.appVersion = '9.9.9'; //H5</script>")
+        assert self._body_version(api_server["url"]) == "9.9.9"
+
+    def test_versioned_index_file_wins(self, api_server):
+        cfg = api_server["module"].config
+        cfg.INDEX_HTML_FILE = "index-2.3.5.html"
+        try:
+            assert self._body_version(api_server["url"]) == "2.3.5"
+        finally:
+            cfg.INDEX_HTML_FILE = "index.html"
+
+    def test_page_ships_version_aware_catalog_helpers(self, api_server):
+        resp = requests.get(f"{api_server['url']}/admin")
+        for token in ("function servedWebappVersion()",
+                      "function legacy4x3Catalog()",
+                      "function templateEffect(",
+                      "TPL_META_4X3_LEGACY",
+                      "Auto (orientation mismatch)",
+                      "(shows as "):
+            assert token in resp.text, token
+
+
+class TestAdminScriptBundle:
+    """The admin page inlines the scripts under ``admin/assets/js/`` in
+    the order listed in ``page_template._SCRIPT_FILES``. A script that is
+    missing from the list would silently never reach the browser."""
+
+    def test_every_script_file_is_listed(self):
+        from src.api.handlers.admin import page_template
+        js_dir = page_template.ASSETS_DIR / "js"
+        on_disk = {p.relative_to(js_dir).as_posix()
+                   for p in js_dir.rglob("*.js")}
+        listed = page_template._SCRIPT_FILES
+        assert len(listed) == len(set(listed))
+        assert set(listed) == on_disk
+
+    def test_strict_mode_comes_first_and_init_last(self):
+        from src.api.handlers.admin import page_template
+        assert page_template._SCRIPT_FILES[0] == "core.js"
+        assert page_template._SCRIPT_FILES[-1] == "main.js"
+        js = page_template.ADMIN_JS
+        first_code = next(line for line in js.splitlines()
+                          if line.strip() and not line.startswith("//"))
+        assert first_code == '"use strict";'

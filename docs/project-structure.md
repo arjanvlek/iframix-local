@@ -39,12 +39,31 @@ src/
       media.py           #     Per-device photo listing, serving, both upload flows
                          #       (Qiniu-style + 2.2.29+ direct uploader), setMedia,
                          #       AI template auto-assignment, per-photo settings
-      admin.py           #     /admin HTML, /admin/chargers refresh fragment,
-                         #       /admin/toggle, /admin/set-mode (manual/auto)
-      admin_assets/      #     Static admin-panel resources (extracted from inline HTML)
-        admin.html       #       Page template
-        admin.css        #       Styles
-        admin.js         #       Client-side logic (uploads, modals, SVG previews)
+      admin/             #     Admin panel package (/admin page + /admin/* endpoints)
+        mixin.py         #       AdminMixin: /admin HTML, /admin/chargers fragment,
+                         #         /admin/devices, /admin/assets, /admin/toggle,
+                         #         /admin/set-mode (manual/auto)
+        page_template.py #       Inlines admin.css + the js/ scripts into admin.html
+        charger_rows.py  #       Chargers table body
+        device_nav.py    #       Sidebar device rows
+        device_views.py  #       Per-device detail view (header + tab bar)
+        device_panels.py #       Tab panels (photos, clock, weather, calendars,
+                         #         playback, remove) and style/module pickers
+        display.py       #       Session filtering, aspect/orientation, webapp version
+        presence.py      #       Online/active heuristics, "seen ... ago"
+        icons.py         #       Inline SVG line icons
+        assets/          #       Static admin-panel resources
+          admin.html     #         Page template
+          admin.css      #         Styles
+          js/            #         Client-side logic, concatenated in page_template order
+            core.js, navigation.js, chargers.js, live-refresh.js, main.js
+            device/      #           One file per device tab (photos, photo-upload,
+                         #             flip-clock, weather, playback, calendars,
+                         #             remove), plus state, view wiring, lightbox
+            gallery-templates/ #     Gallery Mode template catalog, picker modal,
+                         #             and SVG previews (preview-kit + one renderer
+                         #             per catalog: 4x3, 4x3-legacy, 16x9)
+          static/        #         Style screenshots and bundled woff2 fonts
       download.py        #     Download page package info, privacy policy
       logs.py            #     POST /api/user/log/create. Native-app client telemetry
                          #       (2.2.29+) appended to logs/{device_uuid}/client.log
@@ -61,15 +80,18 @@ webapp/                  #   iFramix Pro web interface (Vue 2 SPA)
     js/                  #     Versioned JS bundles
     images/              #     Bundled image assets
     fonts/               #     Bundled fonts
-    assets/              #     Misc bundled assets
+    assets/              #     Misc bundled assets (mixed CSS / fonts / images)
   download/              #   App download/install page (Vite-built Vue SPA, served at /download)
     index.html           #     Download page entry point
+    assets/              #     Bundled JS / CSS / image assets for the download page
     xieyi/               #     Privacy policy page (static HTML)
       index.html
   pad1/                  #   Ultra-legacy iPad 1 web-app (separate Vue 2 SPA, served at /pad1)
     index.html           #     Entry point; main webapp redirects iOS < 9 here
     ipad-static/         #     Versioned asset bundles
                          #     (see ASSETS_PER_APP_VERSION_PAD1.md)
+      assets/            #       CSS / image bundles
+      js/                #       JS chunks
 weather_icons/           # QWeather PNG icons (gitignored, populated by fetch script)
 photos/                  # Per-device normal photos (gitignored, photos/{device_id}/)
 photos_with_ai/          # Per-device AI photos (gitignored, photos_with_ai/{device_id}/)
