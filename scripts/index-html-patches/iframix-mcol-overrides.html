@@ -1,0 +1,126 @@
+  <!--
+    Local override for the AI photo template layouts on non-4:3 displays.
+
+    The bundled stylesheet has structural
+    gaps in ``.mcol_1..5`` (and ``.mrow_1..4``) that break the iPad
+    webapp's Photos+AI rendering on 16:9 screens:
+      * ``.mcol_5`` has no parent rule at all (only ``.mcol_5 .text``),
+        so the slot div has no ``display``/``position``/sizing.
+      * ``.mcol_3`` and ``.mcol_4`` have ``position:relative; display:flex``
+        but no rule sizes ``.album_img`` — the flex item collapses to
+        0 x 0 and the absolute ``.slide`` inside fills 0 x 0 (blank).
+      * ``.mcol_1`` and ``.mcol_2`` have ``flex-direction`` but no
+        ``display:flex`` or ``position`` — the absolute ``.slide``
+        attaches to ``#slideshow`` and paints over ``.text``.
+      * ``.mrow_1..4`` reference ``.album-img`` (hyphen) but the JS
+        emits ``.album_img`` (underscore), so the catalog never matches.
+
+    The 4:3 path uses ``.tpl-container { width:100%; height:100%;
+    position:relative; overflow:hidden }``. We re-instate the same
+    contract for ``.mcol_*`` / ``.mrow_*`` here.
+  -->
+  <style id="iframix-mcol-overrides">
+      /* Every selector below is prefixed with ``#slideshow`` so it
+         outranks the bundled ``[data-v-14a16774]`` scoped rules — those
+         carry an extra attribute selector worth +1 specificity (e.g.
+         ``.mcol_1 .album_img[data-v-14a16774]`` is ``(0,0,3,0)``). The
+         ID prefix gives us ``(0,1,*,0)`` which always wins.
+
+         ``.mcol_*`` lives inside an unclassed ``<div on:click>`` wrapper
+         (the click handler that opens the settings dialog) which has no
+         intrinsic height. ``height:100%`` would resolve against that
+         wrapper's auto-height and collapse to text-content size, so we
+         instead take the slot out of flow with ``position:absolute`` and
+         pin it to all four edges of ``#slideshow`` — ``#slideshow`` is
+         ``position:relative; width:100%; height:100%`` (in the bundled
+         data-v-ea640b22 scope) so this fills the viewport.
+
+         The wrapper's click target still works because absolute children
+         continue to receive pointer events. */
+      #slideshow .mcol_1, #slideshow .mcol_2, #slideshow .mcol_3,
+      #slideshow .mcol_4, #slideshow .mcol_5,
+      #slideshow .mrow_1, #slideshow .mrow_2,
+      #slideshow .mrow_3, #slideshow .mrow_4 {
+          position: absolute;
+          top: 0; left: 0; right: 0; bottom: 0;
+          overflow: hidden;
+          display: flex;
+          /* Bundled rules set ``align-items: center`` on .mcol_1 / .mcol_2,
+             which prevents the ``.album_img`` and ``.text`` flex children
+             from stretching to the parent's full height. We need them
+             stretched so the absolute ``.slide`` inside ``.album_img`` has
+             a sized containing block. */
+          align-items: stretch;
+      }
+      /* Restore the original flex-direction for templates whose parent
+         rule was missing display:flex (so flex-direction was a no-op).
+         mcol_3/mcol_4 already have ``flex-direction:row[-reverse]`` in
+         the bundle and don't need to be set again here. */
+      #slideshow .mcol_1, #slideshow .mcol_5,
+      #slideshow .mrow_2, #slideshow .mrow_3 { flex-direction: row; }
+      #slideshow .mcol_2, #slideshow .mrow_1, #slideshow .mrow_4 {
+          flex-direction: row-reverse;
+      }
+      /* Size the image area so the absolute .slide inside it has a
+         containing block to fill. Cover both spellings — bundle CSS uses
+         .album-img for .mrow_*, JS template emits .album_img. */
+      #slideshow .mcol_1 .album_img, #slideshow .mcol_2 .album_img,
+      #slideshow .mcol_3 .album_img, #slideshow .mcol_4 .album_img,
+      #slideshow .mcol_5 .album_img,
+      #slideshow .mrow_1 .album_img, #slideshow .mrow_2 .album_img,
+      #slideshow .mrow_3 .album_img, #slideshow .mrow_4 .album_img,
+      #slideshow .mrow_1 .album-img, #slideshow .mrow_2 .album-img,
+      #slideshow .mrow_3 .album-img, #slideshow .mrow_4 .album-img {
+          flex: 1 1 50%;
+          position: relative;
+          min-width: 0;
+          min-height: 0;
+      }
+      /* Size the text panel symmetrically for the split layouts. mcol_3/
+         mcol_4/mcol_5 have absolutely-positioned text and don't need a
+         flex basis (they're out of flow). With one flex item left in
+         those, ``.album_img`` ``flex:1 1 50%`` grows to fill the row. */
+      #slideshow .mcol_1 .text, #slideshow .mcol_2 .text,
+      #slideshow .mrow_1 .text, #slideshow .mrow_2 .text,
+      #slideshow .mrow_3 .text, #slideshow .mrow_4 .text {
+          flex: 1 1 50%;
+          min-width: 0;
+          min-height: 0;
+      }
+      /* Lift the text above the absolute .slide so the title/desc don't
+         get painted under the image. Only relevant for templates where
+         .text is ``position:absolute`` (T3/T4/T5) and for the in-flow
+         text in T1/T2 which sits next to the absolute .slide inside
+         .album_img. */
+      #slideshow .mcol_1 .text, #slideshow .mcol_2 .text,
+      #slideshow .mcol_3 .text, #slideshow .mcol_4 .text,
+      #slideshow .mcol_5 .text,
+      #slideshow .mrow_1 .text, #slideshow .mrow_2 .text,
+      #slideshow .mrow_3 .text, #slideshow .mrow_4 .text {
+          z-index: 1;
+      }
+      /* Bundled CSS rotates the text 90° on .mcol_3 / .mcol_4 with a
+         transform-origin that, in conjunction with a 0×0 parent, lands
+         it off-screen to the left/below. With our parent now full-size
+         the rotated text would sit outside the viewport. Drop the
+         rotation so the title/desc show as a normal corner overlay
+         (top-left for T3, bottom-left for T4). The rotation was a
+         stylistic choice that never actually rendered in the original
+         webapp because the parent collapsed to 0 anyway. */
+      #slideshow .mcol_3 .text, #slideshow .mcol_4 .text {
+          transform: none;
+          background-color: rgba(255, 255, 255, 0.6);
+          border-radius: 12px;
+          padding: 12px 16px;
+          max-width: 50%;
+      }
+      #slideshow .mcol_3 .text {
+          top: 4%;
+          left: 4%;
+      }
+      #slideshow .mcol_4 .text {
+          bottom: 4%;
+          right: 4%;
+          left: auto;
+      }
+  </style>

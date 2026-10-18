@@ -1,0 +1,41 @@
+  <!--
+    Local override: fix the 2.3.8 home-screen tiles on iOS 9 / iOS 10
+    Safari (webapp 2.3.8 and later).
+
+    2.3.8 redesigned the home tiles and sizes each tile icon purely in CSS:
+    ``.homeBtn .homeIcon { height: 54% }`` /
+    ``.homeBtn--wide .homeIcon { height: 58% }`` with the ``<img>`` at
+    ``height: 100%``. The tile itself gets its height from ``flex: 1`` in
+    the column layout of ``.icon_box_1`` / ``.icon_box_2``. Old WebKit
+    treats a flex-sized parent as *indefinite* (the same bug the
+    ``.screensaver-retro__cards`` rule above works around), so the
+    percentage resolves to 0: ``.homeIcon`` collapses to 0 px, the image
+    overflows it at its intrinsic size, and the label - centred in the
+    tile by ``justify-content: center`` - is painted straight over the
+    icon. Measured live on an iPad 4 (iOS 10.3.3): ``.homeIcon`` 134 x 0,
+    label at the same y as the image center. 2.3.5 was not affected
+    because it sized the icon in px from JS (``nowWidth``/``nowHeight``).
+
+    Fix: let the icon box and the image take their intrinsic (auto)
+    height, so the column stacks icon + label and centres the stack.
+    Guarded with ``@supports not (aspect-ratio: 1 / 1)`` so it applies
+    only to engines without ``aspect-ratio`` (Safari < 15, Chrome < 88,
+    Firefox < 89) - on every current engine the block is ignored and the
+    bundled percentage sizing keeps working. iOS 10 Safari evaluates that
+    condition to true. The doubled class
+    selectors give (0,4,0) / (0,4,1) specificity so they beat the bundled
+    ``[data-v-*]`` scoped rules regardless of stylesheet order. The two
+    local blocks above were ruled out as a cause (disabling them on the
+    device changed nothing). Portrait tiles use a different, absolute
+    ``padding-top`` layout in the bundle and are not touched here.
+  -->
+  <style id="iframix-home-legacyfix">
+      @supports not (aspect-ratio: 1 / 1) {
+          .homeBtn.homeBtn .homeIcon.homeIcon {
+              height: auto;
+          }
+          .homeBtn.homeBtn .homeIcon.homeIcon img {
+              height: auto;
+          }
+      }
+  </style>

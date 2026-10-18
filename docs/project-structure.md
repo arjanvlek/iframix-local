@@ -102,8 +102,10 @@ scripts/
   fetch-pad1-webapp-assets.py     # Pull the iPad 1 webapp bundles into webapp/pad1/
   fetch-download-assets.py        # Pull the /download page bundles into webapp/download/
   fetch-weather-icons.py          # Pull the QWeather S1 PNG catalog into weather_icons/
-  apply-local-index-html-patch.sh # Re-apply the local hostname/MQTT patch to a fresh
+  apply-local-index-html-patch.sh # Re-apply the 4 local patches (hostname/MQTT config +
+                                  # 3 legacy-iPad <style> blocks) to a fresh
                                   # cloud-built webapp/index.html (idempotent)
+  index-html-patches/             # The <style> block snippets that script inserts
 docs/
   architecture.md                        # Architecture + MQTT message flow
   router.md                              # MQTT router options + CLI commands
