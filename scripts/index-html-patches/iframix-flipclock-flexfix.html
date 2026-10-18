@@ -1,0 +1,72 @@
+  <!--
+    Local override: fix the flip clock on iOS 9 / iOS 10 Safari
+
+    Root cause: the bundled CSS positions two elements with
+    ``position:absolute; width:100%`` and **no ``left``/``right``** inside a
+    ``display:flex; justify-content:center`` parent:
+
+      * ``.screensaver-flip-number__half > .screensaver-flip-number__inner``
+        (the element that actually holds the digits, shared by the
+        asymmetric clocks (styles 2/5) and the retro clock (style 3))
+      * ``.screensaver-theme-yinyang__half > .screensaver-theme-yinyang__info-label``
+        (the date/seconds badges of the Black & White style 4)
+
+    With ``left:auto``, the element's horizontal position falls back to its
+    *static position*. Old WebKit (Safari 9/10, before the css-flexbox
+    static-position change that shipped in 2017-era engines) resolves the
+    static position of an absolutely-positioned child of a flex container
+    to the **justified placeholder position** - for ``justify-content:
+    center`` that is the parent's horizontal midpoint. The inner therefore
+    spans from the parent's center to center + 100% and the overflow is
+    clipped: digits appear shoved to the right edge with roughly half of
+    them cut off. Modern engines resolve the static position to the
+    content-box origin instead (as if the child were the sole flex item),
+    which is why the same bundle renders correctly everywhere else
+    (measured live on the device: the inner sat at +304px inside a 608px
+    panel; with ``left:0`` injected it snapped to 0 and the clock rendered
+    perfectly).
+
+    The fix pins the elements explicitly. Both have ``width:100%``, so
+    ``left:0`` reproduces exactly what modern engines already compute -
+    a no-op for them, the actual fix for iOS 9/10. The bundled CSS sets no
+    ``left`` on either selector, so there is no specificity fight.
+
+    Second old-WebKit bug, same bundle (Rainbow Prism / retro, style 3):
+    ``.screensaver-retro__cards`` is sized ``height:48%`` (landscape,
+    ``34%`` portrait), but its parent ``.screensaver-retro__clock`` gets
+    its height from ``flex:1`` rather than an explicit ``height``. Old
+    WebKit treats a flex-sized parent as indefinite, so the percentage
+    resolves to 0 and the flip cards collapse - only the rainbow wall,
+    floor and date header paint (verified live on the same iPad:
+    ``__cards`` measured 939x0). Modern engines resolve percentages
+    against the flexed size (definite-size rule, ~2016/17 engines). The
+    bundle's own JS works around it for iOS < 10 only (its legacy-ios
+    branch sets an explicit px height); iOS 10 takes the CSS path and
+    collapses. Fix: absolutely position ``__cards`` inside the clock area
+    and center it with top/translateY - percentage heights of abs-pos
+    boxes resolve against the containing block's laid-out height, which
+    is definite even on old engines. Geometry is identical to the flow
+    layout on modern engines (verified: 48% of 553px = 266px, centered,
+    full width; bundled ``padding:0 8%/6%`` keeps applying). Injected
+    live on the device: cards went 939x0 -> 939x266 and the clock
+    rendered perfectly.
+  -->
+  <style id="iframix-flipclock-flexfix">
+      .screensaver-flip-number__inner {
+          left: 0;
+      }
+      .screensaver-theme-yinyang__info-label {
+          left: 0;
+      }
+      .screensaver-retro__clock {
+          position: relative;
+      }
+      .screensaver-retro__cards {
+          position: absolute;
+          top: 50%;
+          left: 0;
+          right: 0;
+          -webkit-transform: translateY(-50%);
+          transform: translateY(-50%);
+      }
+  </style>

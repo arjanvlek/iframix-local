@@ -144,6 +144,8 @@ python3 scripts/fetch-weather-icons.py
 ./scripts/apply-local-index-html-patch.sh
 ```
 
+The last command applies the local patches to the downloaded `webapp/index.html`: it makes the webapp use the hostname it is served from, and it adds three style fixes for old iPads (iOS 9/10). You can run it again safely; it skips patches that are already applied.
+
 ### Step 4: Create a security certificate
 
 The iFramix app only talks over HTTPS (secure connections), which needs a certificate. Since we're not a real cloud company, we'll make our own.
